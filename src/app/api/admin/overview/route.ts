@@ -12,7 +12,6 @@ function supabaseAdmin() {
 
 function isUserSuperAdmin(user: { id: string; email?: string | null }, isSuperAdminProfile?: boolean): boolean {
   if (isSuperAdminProfile) return true
-  // Hardcoded owner fallback & env var fallback
   const hardcodedOwnerId = '678aa37d-2140-4567-ac27-e62c21f4b0b9'
   const hardcodedOwnerEmail = 'ssivanesh544@gmail.com'
   const envSuperAdminEmails = (process.env.SUPER_ADMIN_EMAILS || '')
@@ -45,9 +44,9 @@ export async function GET() {
       throw new ForbiddenError('Super Admin oversight access required')
     }
 
-    // Service-role client queries all tenant accounts safely
     const admin = supabaseAdmin()
 
+    // 1. Fetch all accounts
     const { data: accounts, error: accErr } = await admin
       .from('accounts')
       .select('id, name, created_at, owner_user_id, onboarding_completed_at')
@@ -58,65 +57,100 @@ export async function GET() {
       return NextResponse.json({ error: 'Failed to query accounts' }, { status: 500 })
     }
 
-    const accountOverviewList = await Promise.all(
-      (accounts || []).map(async (acc) => {
-        // Owner email lookup
-        const { data: ownerProfile } = await admin
-          .from('profiles')
-          .select('email, full_name')
-          .eq('user_id', acc.owner_user_id)
-          .maybeSingle()
-
-        // Member count
-        const { count: memberCount } = await admin
-          .from('profiles')
-          .select('id', { count: 'exact', head: true })
-          .eq('account_id', acc.id)
-
-        // WhatsApp config status
-        const { data: waConfig } = await admin
-          .from('whatsapp_config')
-          .select('status, phone_number_id, waba_id, updated_at')
-          .eq('account_id', acc.id)
-          .maybeSingle()
-
-        // Contact count
-        const { count: contactCount } = await admin
-          .from('contacts')
-          .select('id', { count: 'exact', head: true })
-          .eq('account_id', acc.id)
-
-        // Conversation count
-        const { count: conversationCount } = await admin
-          .from('conversations')
-          .select('id', { count: 'exact', head: true })
-          .eq('account_id', acc.id)
-
-        // Message count
-        const { count: messageCount } = await admin
-          .from('messages')
-          .select('id, conversations!inner(account_id)', { count: 'exact', head: true })
-          .eq('conversations.account_id', acc.id)
-
-        return {
-          id: acc.id,
-          name: acc.name,
-          createdAt: acc.created_at,
-          onboardingCompletedAt: acc.onboarding_completed_at,
-          ownerEmail: ownerProfile?.email || 'N/A',
-          ownerName: ownerProfile?.full_name || 'N/A',
-          memberCount: memberCount || 1,
-          whatsappStatus: waConfig?.status || 'disconnected',
-          phoneNumberId: waConfig?.phone_number_id || null,
-          wabaId: waConfig?.waba_id || null,
-          stats: {
-            contacts: contactCount || 0,
-            conversations: conversationCount || 0,
-            messages: messageCount || 0,
-          },
-        }
+    if (!accounts || accounts.length === 0) {
+      return NextResponse.json({
+        accounts: [],
+        totalAccounts: 0,
+        timestamp: new Date().toISOString(),
       })
-    )
+    }
+
+    const accountIds = accounts.map((a) => a.id)
+    const ownerUserIds = Array.from(new Set(accounts.map((a) => a.owner_user_id)))
+
+    // 2. Batched parallel queries (6 queries total, NO N+1 loop)
+    const [
+      { data: ownerProfiles },
+      { data: allProfiles },
+      { data: waConfigs },
+      { data: contactsData },
+      { data: conversationsData },
+    ] = await Promise.all([
+      admin
+        .from('profiles')
+        .select('user_id, email, full_name')
+        .in('user_id', ownerUserIds),
+      admin
+        .from('profiles')
+        .select('account_id')
+        .in('account_id', accountIds),
+      admin
+        .from('whatsapp_config')
+        .select('account_id, status, phone_number_id, waba_id, updated_at')
+        .in('account_id', accountIds),
+      admin
+        .from('contacts')
+        .select('account_id')
+        .in('account_id', accountIds),
+      admin
+        .from('conversations')
+        .select('account_id')
+        .in('account_id', accountIds),
+    ])
+
+    // Build fast lookup maps in O(N)
+    const ownerMap = new Map<string, { email: string; full_name: string | null }>()
+    ownerProfiles?.forEach((p) => ownerMap.set(p.user_id, p))
+
+    const memberCountMap = new Map<string, number>()
+    allProfiles?.forEach((p) => {
+      if (p.account_id) {
+        memberCountMap.set(p.account_id, (memberCountMap.get(p.account_id) || 0) + 1)
+      }
+    })
+
+    const waConfigMap = new Map<string, { status: string; phone_number_id: string | null; waba_id: string | null }>()
+    waConfigs?.forEach((cfg) => {
+      if (cfg.account_id) waConfigMap.set(cfg.account_id, cfg)
+    })
+
+    const contactCountMap = new Map<string, number>()
+    contactsData?.forEach((c) => {
+      if (c.account_id) {
+        contactCountMap.set(c.account_id, (contactCountMap.get(c.account_id) || 0) + 1)
+      }
+    })
+
+    const convCountMap = new Map<string, number>()
+    conversationsData?.forEach((cv) => {
+      if (cv.account_id) {
+        convCountMap.set(cv.account_id, (convCountMap.get(cv.account_id) || 0) + 1)
+      }
+    })
+
+    // Assemble final response list
+    const accountOverviewList = accounts.map((acc) => {
+      const owner = ownerMap.get(acc.owner_user_id)
+      const waConfig = waConfigMap.get(acc.id)
+
+      return {
+        id: acc.id,
+        name: acc.name,
+        createdAt: acc.created_at,
+        onboardingCompletedAt: acc.onboarding_completed_at,
+        ownerEmail: owner?.email || 'N/A',
+        ownerName: owner?.full_name || 'N/A',
+        memberCount: memberCountMap.get(acc.id) || 1,
+        whatsappStatus: waConfig?.status || 'disconnected',
+        phoneNumberId: waConfig?.phone_number_id || null,
+        wabaId: waConfig?.waba_id || null,
+        stats: {
+          contacts: contactCountMap.get(acc.id) || 0,
+          conversations: convCountMap.get(acc.id) || 0,
+          messages: 0,
+        },
+      }
+    })
 
     return NextResponse.json({
       accounts: accountOverviewList,
