@@ -116,7 +116,7 @@ import { useTranslations } from "next-intl";
 export function Sidebar({ open = false, onClose }: SidebarProps) {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
-  const { profile, profileLoading, account, accountRole, signOut } = useAuth();
+  const { profile, profileLoading, account, accountRole, isSuperAdmin, signOut } = useAuth();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
   // Only surface the account-name strip when it actually carries
@@ -267,6 +267,21 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               );
             })}
           </ul>
+
+          {isSuperAdmin && (
+            <div className="mt-4 pt-4 border-t border-border">
+              <Link
+                href="/admin"
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2 border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20",
+                  pathname.startsWith("/admin") && "bg-amber-500/25 border-amber-500/50 font-semibold"
+                )}
+              >
+                <Shield className="h-4 w-4" />
+                <span>Super Admin</span>
+              </Link>
+            </div>
+          )}
 
           <div className="my-4 border-t border-border" />
 

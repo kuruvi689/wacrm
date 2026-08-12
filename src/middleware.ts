@@ -70,11 +70,48 @@ export async function middleware(request: NextRequest) {
   }
 
   // Protected pages - redirect to login if not authenticated
-  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings']
-  if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
+  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings', '/agents', '/flows', '/notifications', '/admin']
+  const isProtectedPath = protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))
+
+  if (!user && isProtectedPath) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return withRefreshedCookies(NextResponse.redirect(url))
+  }
+
+  // Onboarding wizard redirect check for authenticated users
+  if (user && (isProtectedPath || request.nextUrl.pathname === '/onboarding')) {
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('account_id')
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (profile?.account_id) {
+        const { data: account } = await supabase
+          .from('accounts')
+          .select('onboarding_completed_at')
+          .eq('id', profile.account_id)
+          .maybeSingle()
+
+        const isCompleted = Boolean(account?.onboarding_completed_at)
+
+        if (!isCompleted && request.nextUrl.pathname !== '/onboarding') {
+          const url = request.nextUrl.clone()
+          url.pathname = '/onboarding'
+          return withRefreshedCookies(NextResponse.redirect(url))
+        }
+
+        if (isCompleted && request.nextUrl.pathname === '/onboarding') {
+          const url = request.nextUrl.clone()
+          url.pathname = '/dashboard'
+          return withRefreshedCookies(NextResponse.redirect(url))
+        }
+      }
+    } catch {
+      // Ignore query errors in middleware (e.g. mock unit tests) and allow request to proceed
+    }
   }
 
   // API routes that need auth (not webhooks)
