@@ -79,8 +79,8 @@ export async function middleware(request: NextRequest) {
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
-  // Onboarding wizard redirect check for authenticated users
-  if (user && (isProtectedPath || request.nextUrl.pathname === '/onboarding')) {
+  // Onboarding page check — if completed, redirect off /onboarding to /dashboard
+  if (user && request.nextUrl.pathname === '/onboarding') {
     try {
       const { data: profile } = await supabase
         .from('profiles')
@@ -95,22 +95,14 @@ export async function middleware(request: NextRequest) {
           .eq('id', profile.account_id)
           .maybeSingle()
 
-        const isCompleted = Boolean(account?.onboarding_completed_at)
-
-        if (!isCompleted && request.nextUrl.pathname !== '/onboarding') {
-          const url = request.nextUrl.clone()
-          url.pathname = '/onboarding'
-          return withRefreshedCookies(NextResponse.redirect(url))
-        }
-
-        if (isCompleted && request.nextUrl.pathname === '/onboarding') {
+        if (account?.onboarding_completed_at) {
           const url = request.nextUrl.clone()
           url.pathname = '/dashboard'
           return withRefreshedCookies(NextResponse.redirect(url))
         }
       }
     } catch {
-      // Ignore query errors in middleware (e.g. mock unit tests) and allow request to proceed
+      // Ignore query errors in middleware
     }
   }
 

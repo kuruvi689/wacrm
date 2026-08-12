@@ -148,6 +148,17 @@ export default function OnboardingPage() {
           <p className="text-muted-foreground text-sm max-w-md mx-auto">
             Set up your organization, connect your Meta WhatsApp Business account, and start serving customers.
           </p>
+          <div className="pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => router.push("/dashboard")}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Skip / Enter CRM Directly →
+            </Button>
+          </div>
         </div>
 
         {/* Step Indicator */}

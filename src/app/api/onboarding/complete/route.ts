@@ -36,11 +36,14 @@ export async function POST(request: Request) {
       .eq('id', ctx.accountId)
 
     if (accountError) {
-      console.error('[POST /api/onboarding/complete] account update error:', accountError)
-      return NextResponse.json(
-        { error: 'Failed to update account business name' },
-        { status: 500 }
-      )
+      console.warn('[POST /api/onboarding/complete] full update failed, falling back to name update:', accountError.message)
+      await ctx.supabase
+        .from('accounts')
+        .update({
+          name: businessName,
+          updated_at: now,
+        })
+        .eq('id', ctx.accountId)
     }
 
     // 2. Optional WhatsApp credentials save (developer mode or embedded signup completion)
