@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { toErrorResponse, ForbiddenError, UnauthorizedError } from '@/lib/auth/account'
 
+import { isPlatformAdmin } from '@/lib/auth/isPlatformAdmin'
+
 function supabaseAdmin() {
   return createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,18 +14,7 @@ function supabaseAdmin() {
 
 function isUserSuperAdmin(user: { id: string; email?: string | null }, isSuperAdminProfile?: boolean): boolean {
   if (isSuperAdminProfile) return true
-  const hardcodedOwnerId = '678aa37d-2140-4567-ac27-e62c21f4b0b9'
-  const hardcodedOwnerEmail = 'ssivanesh544@gmail.com'
-  const envSuperAdminEmails = (process.env.SUPER_ADMIN_EMAILS || '')
-    .split(',')
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean)
-
-  if (user.id === hardcodedOwnerId) return true
-  if (user.email && user.email.toLowerCase() === hardcodedOwnerEmail) return true
-  if (user.email && envSuperAdminEmails.includes(user.email.toLowerCase())) return true
-
-  return false
+  return isPlatformAdmin(user?.email)
 }
 
 export async function GET() {

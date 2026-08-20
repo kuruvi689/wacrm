@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isPlatformAdmin } from '@/lib/auth/isPlatformAdmin'
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -24,17 +25,8 @@ export async function middleware(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
+  const isAdmin = isPlatformAdmin(user?.email)
 
-  // getUser() transparently refreshes an expired access token, which
-  // ROTATES the refresh token and writes the new cookies onto
-  // `supabaseResponse` via setAll() above. Any response we return in
-  // place of `supabaseResponse` (every redirect / JSON branch below)
-  // is a fresh object that does NOT carry those Set-Cookie headers, so
-  // the rotated token never reaches the browser. The next request then
-  // replays the old, now-consumed refresh token, the refresh fails, and
-  // the session wedges — the user gets a broken reload after idling and
-  // can only recover by manually clearing cookies (issue #288). Copy the
-  // refreshed cookies onto whatever response we hand back to fix that.
   const withRefreshedCookies = <T extends NextResponse>(response: T): T => {
     supabaseResponse.cookies.getAll().forEach((cookie) => {
       response.cookies.set(cookie)
@@ -42,12 +34,21 @@ export async function middleware(request: NextRequest) {
     return response
   }
 
-  // Auth pages - redirect to dashboard if already logged in.
-  // Exception: when an invite token is in the query string we
-  // send the already-signed-in user to /join/<token> instead so
-  // they can accept the invitation in one click. Without this,
-  // a forwarded invite link to someone who's already signed in
-  // would silently drop them on /dashboard.
+  // 1. Admin route protection - ONLY ssivanesh544@gmail.com can access /admin
+  if (request.nextUrl.pathname.startsWith('/admin')) {
+    if (!user) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/login'
+      return withRefreshedCookies(NextResponse.redirect(url))
+    }
+    if (!isAdmin) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/dashboard'
+      return withRefreshedCookies(NextResponse.redirect(url))
+    }
+  }
+
+  // 2. Auth pages (login, signup) - redirect logged-in user to appropriate home
   if (user && (
     request.nextUrl.pathname === '/login' ||
     request.nextUrl.pathname === '/signup' ||
@@ -63,14 +64,14 @@ export async function middleware(request: NextRequest) {
       url.pathname = `/join/${encodeURIComponent(inviteToken)}`
       url.search = ''
     } else {
-      url.pathname = '/dashboard'
+      url.pathname = isAdmin ? '/admin' : '/dashboard'
       url.search = ''
     }
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
-  // Protected pages - redirect to login if not authenticated
-  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings', '/agents', '/flows', '/notifications', '/admin']
+  // 3. Protected pages check
+  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings', '/agents', '/flows', '/notifications']
   const isProtectedPath = protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))
 
   if (!user && isProtectedPath) {
@@ -79,8 +80,8 @@ export async function middleware(request: NextRequest) {
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
-  // Onboarding page check — if completed, redirect off /onboarding to /dashboard
-  if (user && request.nextUrl.pathname === '/onboarding') {
+  // 4. Force onboarding for clients without connected WhatsApp
+  if (user && !isAdmin && isProtectedPath && !request.nextUrl.pathname.startsWith('/onboarding')) {
     try {
       const { data: profile } = await supabase
         .from('profiles')
@@ -89,15 +90,15 @@ export async function middleware(request: NextRequest) {
         .maybeSingle()
 
       if (profile?.account_id) {
-        const { data: account } = await supabase
-          .from('accounts')
-          .select('onboarding_completed_at')
-          .eq('id', profile.account_id)
+        const { data: connection } = await supabase
+          .from('whatsapp_connections')
+          .select('id, status')
+          .eq('account_id', profile.account_id)
           .maybeSingle()
 
-        if (account?.onboarding_completed_at) {
+        if (!connection || connection.status !== 'connected') {
           const url = request.nextUrl.clone()
-          url.pathname = '/dashboard'
+          url.pathname = `/onboarding/${profile.account_id}`
           return withRefreshedCookies(NextResponse.redirect(url))
         }
       }
@@ -106,7 +107,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // API routes that need auth (not webhooks)
+  // 5. API routes auth gating (except public webhooks & onboarding)
   if (!user && request.nextUrl.pathname.startsWith('/api/whatsapp/') &&
       !request.nextUrl.pathname.includes('/webhook')) {
     return withRefreshedCookies(

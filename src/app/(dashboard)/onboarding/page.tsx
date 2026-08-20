@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { BrandMark } from "@/components/brand-mark";
 import { useAuth } from "@/hooks/use-auth";
 import {
   Building2,
@@ -10,7 +11,6 @@ import {
   Code2,
   Globe2,
   Loader2,
-  MessageSquare,
   QrCode,
   ShieldCheck,
   Zap,
@@ -50,11 +50,150 @@ export default function OnboardingPage() {
   // Webhook verification test state
   const [webhookTested, setWebhookTested] = useState(false);
 
+  // Embedded signup state
+  const [embeddedLoading, setEmbeddedLoading] = useState(false);
+  const [fbSdkLoaded, setFbSdkLoaded] = useState(false);
+
   useEffect(() => {
     if (account?.name) {
       setBusinessName(account.name);
     }
   }, [account?.name]);
+
+  // Load Facebook SDK for Embedded Signup
+  useEffect(() => {
+    // Skip if already loaded
+    if (typeof window !== "undefined" && (window as unknown as Record<string, unknown>).FB) {
+      setFbSdkLoaded(true);
+      return;
+    }
+
+    const META_APP_ID = process.env.NEXT_PUBLIC_META_APP_ID;
+    if (!META_APP_ID) return;
+
+    // FB SDK init callback
+    (window as unknown as Record<string, unknown>).fbAsyncInit = function () {
+      const FB = (window as unknown as Record<string, { init: (opts: Record<string, unknown>) => void }>).FB;
+      FB.init({
+        appId: META_APP_ID,
+        cookie: true,
+        xfbml: true,
+        version: "v21.0",
+      });
+      setFbSdkLoaded(true);
+    };
+
+    // Load the SDK script
+    const script = document.createElement("script");
+    script.src = "https://connect.facebook.net/en_US/sdk.js";
+    script.async = true;
+    script.defer = true;
+    script.crossOrigin = "anonymous";
+    document.body.appendChild(script);
+
+    return () => {
+      // Cleanup is tricky with FB SDK — just leave it loaded
+    };
+  }, []);
+
+  // Listen for session info from the Embedded Signup popup
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (
+        event.origin !== "https://www.facebook.com" &&
+        event.origin !== "https://web.facebook.com"
+      ) {
+        return;
+      }
+
+      try {
+        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        if (data.type === "WA_EMBEDDED_SIGNUP") {
+          // data contains waba_id and phone_number_id
+          if (data.data?.waba_id) setWabaId(data.data.waba_id);
+          if (data.data?.phone_number_id) setPhoneNumberId(data.data.phone_number_id);
+        }
+      } catch {
+        // Not a JSON message from FB — ignore
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
+  const launchEmbeddedSignup = () => {
+    const FB = (window as unknown as Record<string, unknown>).FB as {
+      login: (
+        callback: (response: {
+          authResponse?: { code?: string };
+          status?: string;
+        }) => void,
+        options: Record<string, unknown>,
+      ) => void;
+    } | undefined;
+
+    const META_CONFIG_ID = process.env.NEXT_PUBLIC_META_CONFIG_ID;
+
+    if (!FB) {
+      toast.error("Facebook SDK not loaded. Please refresh and try again.");
+      return;
+    }
+
+    if (!META_CONFIG_ID) {
+      toast.error("Meta Configuration ID not set. Contact your administrator.");
+      return;
+    }
+
+    setEmbeddedLoading(true);
+
+    FB.login(
+      (response) => {
+        if (response.authResponse?.code) {
+          // Exchange the code for an access token via our API
+          fetch("/api/whatsapp/embedded-signup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              code: response.authResponse.code,
+              waba_id: wabaId || undefined,
+              phone_number_id: phoneNumberId || undefined,
+            }),
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.success) {
+                toast.success(
+                  `WhatsApp connected! ${data.display_phone_number || ""}`
+                );
+                if (data.phone_number_id) setPhoneNumberId(data.phone_number_id);
+                if (data.waba_id) setWabaId(data.waba_id);
+                setStep(3);
+              } else {
+                toast.error(data.error || "Failed to connect WhatsApp");
+              }
+            })
+            .catch(() => {
+              toast.error("Failed to exchange authorization code");
+            })
+            .finally(() => setEmbeddedLoading(false));
+        } else {
+          toast.info("WhatsApp connection was cancelled or not completed.");
+          setEmbeddedLoading(false);
+        }
+      },
+      {
+        config_id: META_CONFIG_ID,
+        response_type: "code",
+        override_default_response_type: true,
+        extras: {
+          setup: {},
+          featureType: "",
+          sessionInfoVersion: "3",
+        },
+      },
+    );
+  };
 
   const handleNextStep1 = (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,11 +278,11 @@ export default function OnboardingPage() {
       <div className="w-full max-w-2xl space-y-6">
         {/* Header */}
         <div className="text-center space-y-2">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary mb-2">
-            <MessageSquare className="h-6 w-6" />
+          <div className="mb-2">
+            <BrandMark size="lg" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-            Welcome to WACRM
+            Welcome to ROOKIE CRM
           </h1>
           <p className="text-muted-foreground text-sm max-w-md mx-auto">
             Set up your organization, connect your Meta WhatsApp Business account, and start serving customers.
@@ -325,13 +464,20 @@ export default function OnboardingPage() {
                     </p>
                     <Button
                       type="button"
-                      onClick={() => {
-                        toast.info("Meta App Embedded Signup popup launched");
-                        setStep(3);
-                      }}
-                      className="gap-2 bg-[#1877F2] hover:bg-[#166FE5] text-white"
+                      onClick={launchEmbeddedSignup}
+                      disabled={embeddedLoading || !fbSdkLoaded}
+                      className="gap-2 bg-primary hover:bg-primary-hover text-primary-foreground"
                     >
-                      <Globe2 className="h-4 w-4" /> Continue with Facebook / WhatsApp
+                      {embeddedLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Globe2 className="h-4 w-4" />
+                      )}
+                      {embeddedLoading
+                        ? "Connecting..."
+                        : !fbSdkLoaded
+                        ? "Loading Facebook SDK..."
+                        : "Connect WhatsApp"}
                     </Button>
                   </div>
                   <div className="flex justify-between pt-2">

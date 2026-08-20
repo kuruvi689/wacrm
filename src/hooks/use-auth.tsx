@@ -147,7 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
 
       if (error) {
-        console.error("[AuthProvider] fetchProfile error:", {
+        console.warn("[AuthProvider] fetchProfile warning:", {
           message: error.message,
           details: error.details,
           hint: error.hint,
