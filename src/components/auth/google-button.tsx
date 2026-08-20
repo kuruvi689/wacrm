@@ -28,7 +28,7 @@ export function GoogleSignInButton({
         ? `/join/${encodeURIComponent(inviteToken)}`
         : '/dashboard'
 
-      // 1. Primary check: Firebase Auth popup fallback
+      // 1. Check if Firebase Auth popup is configured
       if (isFirebaseConfigured() && auth && googleProvider) {
         try {
           const result = await signInWithPopup(auth, googleProvider)
@@ -37,16 +37,16 @@ export function GoogleSignInButton({
             return
           }
         } catch (fbErr: any) {
-          console.warn('[Firebase Google Auth] Popup failed:', fbErr)
+          console.warn('[Firebase Google Auth] Popup failed, using Supabase OAuth:', fbErr)
         }
       }
 
-      // 2. Supabase Google OAuth with pre-flight check (skipBrowserRedirect)
+      // 2. Supabase Google OAuth
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          skipBrowserRedirect: true,
-          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+          redirectTo,
         },
       })
 
@@ -57,7 +57,7 @@ export function GoogleSignInButton({
           error.message.toLowerCase().includes('unsupported provider')
         ) {
           friendlyMessage =
-            'Google OAuth provider is not enabled in your Supabase Dashboard. Please enable Google under Supabase Dashboard → Authentication → Providers → Google, or log in with Email & Password below.'
+            'Google OAuth provider is not enabled in your Supabase Dashboard. Enable Google under Supabase Dashboard → Authentication → Providers → Google, or log in with Email & Password below.'
         }
         if (onError) onError(friendlyMessage)
         setLoading(false)
@@ -65,28 +65,6 @@ export function GoogleSignInButton({
       }
 
       if (data?.url) {
-        // Pre-flight GET check to ensure provider is enabled before redirecting browser
-        try {
-          const res = await fetch(data.url, { method: 'GET', redirect: 'manual' })
-          if (res.status === 400) {
-            const bodyText = await res.text()
-            if (
-              bodyText.includes('validation_failed') ||
-              bodyText.includes('provider is not enabled') ||
-              bodyText.includes('Unsupported provider')
-            ) {
-              const friendlyMessage =
-                'Google OAuth provider is not enabled in your Supabase Dashboard. Please enable Google under Supabase Dashboard → Authentication → Providers → Google, or log in with Email & Password below.'
-              if (onError) onError(friendlyMessage)
-              setLoading(false)
-              return
-            }
-          }
-        } catch (checkErr) {
-          console.warn('[Google OAuth] Pre-flight check warning:', checkErr)
-        }
-
-        // Provider is enabled -> proceed to OAuth redirect
         window.location.href = data.url
       }
     } catch (err) {
