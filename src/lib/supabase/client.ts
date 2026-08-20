@@ -1,18 +1,19 @@
 import { createBrowserClient } from '@supabase/ssr'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-// Singleton instance — one client shared across the whole browser session.
-// Creating multiple clients causes auth-lock contention ("Lock was released
-// because another request stole it") and intermittent fetch failures.
 let browserClient: SupabaseClient | undefined
 
 export function createClient() {
   if (browserClient) return browserClient
 
-  browserClient = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    'https://uiwddylawrxgshtwyabi.supabase.co'
+  const supabaseKey =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVpd2RkeWxhd3J4Z3NodHd5YWJpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTg3NzEsImV4cCI6MjA5NzM3NDc3MX0._FyB9qDbCVzE9vSUi45zdGWYlq-DmJb0iOtpumV3kM4'
+
+  browserClient = createBrowserClient(supabaseUrl, supabaseKey)
 
   return browserClient
 }
