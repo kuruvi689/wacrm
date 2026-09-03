@@ -31,7 +31,15 @@ async function throwMetaError(response: Response, fallback: string): Promise<nev
   let message = fallback
   try {
     const data = (await response.json()) as MetaErrorResponse
-    if (data.error?.message) message = data.error.message
+    if (data.error?.message) {
+      if (data.error.code === 131030 || data.error.message.includes('131030') || data.error.message.includes('allowed list')) {
+        message = `(#131030) Recipient phone number is not in your allowed test list. Add this phone number in Meta Developer Console (WhatsApp → API Setup → To) before sending test messages.`
+      } else if (data.error.code) {
+        message = `(#${data.error.code}) ${data.error.message}`
+      } else {
+        message = data.error.message
+      }
+    }
   } catch {
     // response body wasn't JSON — keep the fallback
   }

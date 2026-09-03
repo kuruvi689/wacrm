@@ -247,44 +247,54 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       const phoneNumberId = value.metadata.phone_number_id
 
-      // Find user's config by phone_number_id. `.single()` returns
-      // PGRST116 for both 0 rows AND ≥2 rows — distinguish them so
-      // operators see the real cause in logs. ≥2 rows shouldn't happen
-      // post-migration 013 (UNIQUE constraint), but a row created
-      // before the constraint, or a race, would still surface here.
-      const { data: configRows, error: configError } = await supabaseAdmin()
-        .from('whatsapp_config')
+      let resolvedAccountId: string | null = null
+      let resolvedUserId: string | null = null
+      let decryptedAccessToken = ''
+
+      // 1. Check whatsapp_connections table (Embedded Signup connections)
+      const { data: connRows } = await supabaseAdmin()
+        .from('whatsapp_connections')
         .select('*')
         .eq('phone_number_id', phoneNumberId)
 
-      if (configError) {
-        console.error(
-          'Error fetching whatsapp_config for phone_number_id:',
-          phoneNumberId,
-          configError
-        )
-        continue
+      if (connRows && connRows.length > 0) {
+        const conn = connRows[0]
+        resolvedAccountId = conn.account_id || conn.org_id
+        resolvedUserId = conn.user_id || 'system'
+        if (conn.access_token_encrypted) {
+          try {
+            decryptedAccessToken = decrypt(conn.access_token_encrypted)
+          } catch {
+            decryptedAccessToken = ''
+          }
+        }
       }
 
-      if (!configRows || configRows.length === 0) {
-        console.error('No config found for phone_number_id:', phoneNumberId)
-        continue
+      // 2. Fallback to whatsapp_config table
+      if (!resolvedAccountId) {
+        const { data: configRows } = await supabaseAdmin()
+          .from('whatsapp_config')
+          .select('*')
+          .eq('phone_number_id', phoneNumberId)
+
+        if (configRows && configRows.length > 0) {
+          const cfg = configRows[0]
+          resolvedAccountId = cfg.account_id
+          resolvedUserId = cfg.user_id
+          if (cfg.access_token) {
+            try {
+              decryptedAccessToken = decrypt(cfg.access_token)
+            } catch {
+              decryptedAccessToken = ''
+            }
+          }
+        }
       }
 
-      if (configRows.length > 1) {
-        console.error(
-          `Multiple configs (${configRows.length}) found for phone_number_id:`,
-          phoneNumberId,
-          '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
-          'Account owners:',
-          configRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
-        )
+      if (!resolvedAccountId) {
+        console.error('No tenant connection found for phone_number_id:', phoneNumberId)
         continue
       }
-
-      const config = configRows[0]
-
-      const decryptedAccessToken = decrypt(config.access_token)
 
       for (let i = 0; i < value.messages.length; i++) {
         const message = value.messages[i]
@@ -293,13 +303,8 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         await processMessage(
           message,
           contact,
-          // Tenancy — drives every contact / conversation lookup
-          // and the engines' active-row dispatch.
-          config.account_id,
-          // Audit / sender-of-record — used as the user_id on row
-          // inserts that need it for NOT NULL FK compliance. Always
-          // the admin who saved the WhatsApp config.
-          config.user_id,
+          resolvedAccountId,
+          resolvedUserId || 'system',
           decryptedAccessToken
         )
       }
@@ -654,6 +659,21 @@ async function processMessage(
     : message.type === 'sticker'
       ? 'image'   // stickers are images
       : 'text'    // reaction, unknown → text fallback
+
+  // Deduplicate retried webhooks from Meta based on message.id
+  if (message.id) {
+    const { data: existingMsg } = await supabaseAdmin()
+      .from('messages')
+      .select('id')
+      .eq('conversation_id', conversation.id)
+      .eq('message_id', message.id)
+      .maybeSingle()
+
+    if (existingMsg) {
+      console.log('[webhook] Skipping duplicate inbound message.id:', message.id)
+      return
+    }
+  }
 
   // Determine whether this is the contact's very first inbound message
   // BEFORE we insert, so the count is accurate. Covers the case where

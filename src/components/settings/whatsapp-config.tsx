@@ -212,13 +212,8 @@ export function WhatsAppConfig() {
       if (tokenEdited && accessToken !== MASKED_TOKEN && accessToken.trim()) {
         payload.access_token = accessToken.trim();
       } else if (config) {
-        // Existing config — reuse stored encrypted token by decrypting on the
-        // server. But our POST handler requires an access_token to verify
-        // with Meta. If the user didn't change the token, we need to signal
-        // that. Simplest: require token re-entry if they're updating.
-        toast.error('Please re-enter the Access Token to save changes');
-        setSaving(false);
-        return;
+        // Reuse stored encrypted access token on server
+        payload.access_token = MASKED_TOKEN;
       }
 
       const res = await fetch('/api/whatsapp/config', {
@@ -396,6 +391,35 @@ export function WhatsAppConfig() {
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
       <div className="space-y-6">
+        {/* Client Onboarding & Meta App Review Flow Banner */}
+        <Card className="border-blue-500/30 bg-blue-950/20 shadow-lg">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base text-blue-300 flex items-center gap-2">
+              <Zap className="size-4 text-blue-400" />
+              Meta Embedded Signup & Client Onboarding
+            </CardTitle>
+            <CardDescription className="text-xs text-blue-200/80">
+              Onboard your WhatsApp Business Account (WABA) via Meta Embedded Signup or view the Meta App Review video proof walkthrough.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center gap-3">
+            <a
+              href="/onboarding/demo-org"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-colors shadow-sm"
+            >
+              <ExternalLink className="size-3.5" />
+              Launch Client Onboarding Flow
+            </a>
+            <a
+              href="/review"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition-colors border border-slate-700"
+            >
+              <ExternalLink className="size-3.5" />
+              Meta App Review Proofs Page
+            </a>
+          </CardContent>
+        </Card>
+
         {/* Corrupted-token reset banner */}
         {showResetBanner && (
           <Alert className="bg-amber-950/40 border-amber-600/40">
@@ -647,7 +671,7 @@ export function WhatsAppConfig() {
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
               />
               <p className="text-xs text-muted-foreground leading-relaxed">
-                <span dangerouslySetInnerHTML={{ __html: t('pinHint') }} />
+                <span dangerouslySetInnerHTML={{ __html: t.raw('pinHint') }} />
               </p>
             </div>
           </CardContent>
@@ -760,7 +784,7 @@ export function WhatsAppConfig() {
                 </AccordionTrigger>
                 <AccordionContent className="text-muted-foreground">
                   <ol className="list-decimal list-inside space-y-1 text-sm">
-                    <li dangerouslySetInnerHTML={{ __html: t('step1_1') }} />
+                    <li dangerouslySetInnerHTML={{ __html: t.raw('step1_1') }} />
                     <li>{t('step1_2')}</li>
                     <li>{t('step1_3')}</li>
                     <li>{t('step1_4')}</li>
@@ -794,9 +818,9 @@ export function WhatsAppConfig() {
                 <AccordionContent className="text-muted-foreground">
                   <ol className="list-decimal list-inside space-y-1 text-sm">
                     <li>{t('step3_1')}</li>
-                    <li dangerouslySetInnerHTML={{ __html: t('step3_2') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t('step3_3') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t('step3_4') }} />
+                    <li dangerouslySetInnerHTML={{ __html: t.raw('step3_2') }} />
+                    <li dangerouslySetInnerHTML={{ __html: t.raw('step3_3') }} />
+                    <li dangerouslySetInnerHTML={{ __html: t.raw('step3_4') }} />
                   </ol>
                 </AccordionContent>
               </AccordionItem>
@@ -812,8 +836,8 @@ export function WhatsAppConfig() {
                   <ol className="list-decimal list-inside space-y-1 text-sm">
                     <li>{t('step4_1')}</li>
                     <li>{t('step4_2')}</li>
-                    <li dangerouslySetInnerHTML={{ __html: t('step4_3') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t('step4_4') }} />
+                    <li dangerouslySetInnerHTML={{ __html: t.raw('step4_3') }} />
+                    <li dangerouslySetInnerHTML={{ __html: t.raw('step4_4') }} />
                     <li>{t('step4_5')}</li>
                   </ol>
                 </AccordionContent>
