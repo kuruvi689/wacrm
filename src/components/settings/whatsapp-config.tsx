@@ -177,10 +177,39 @@ export function WhatsAppConfig() {
       setLoading(false);
       return;
     }
-    if (loadedAccountIdRef.current === accountId) return;
-    loadedAccountIdRef.current = accountId;
     fetchConfig(accountId);
   }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
+
+  const handleLaunchEmbeddedSignup = () => {
+    const appId = process.env.NEXT_PUBLIC_META_APP_ID || '';
+    const configId = process.env.NEXT_PUBLIC_META_CONFIG_ID || '';
+    const redirectUri = typeof window !== 'undefined' ? `${window.location.origin}/settings` : '';
+
+    if (typeof window !== 'undefined' && (window as any).FB) {
+      (window as any).FB.login(
+        (response: any) => {
+          if (response.authResponse?.code) {
+            toast.success('Meta Embedded Signup authorization received!');
+          }
+        },
+        {
+          config_id: configId,
+          response_type: 'code',
+          override_default_response_type: true,
+          extras: { setup: {} },
+        }
+      );
+    } else if (appId && configId) {
+      const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(
+        redirectUri
+      )}&config_id=${configId}&response_type=code&scope=whatsapp_business_management,whatsapp_business_messaging`;
+      window.open(url, '_blank', 'width=600,height=700');
+    } else {
+      toast.info(
+        'Meta Embedded Signup pop-up: Enter your Meta App credentials below or set NEXT_PUBLIC_META_CONFIG_ID in your environment.'
+      );
+    }
+  };
 
   async function handleSave() {
     if (!phoneNumberId.trim()) {
@@ -553,6 +582,42 @@ export function WhatsAppConfig() {
             )}
           </Alert>
         )}
+
+        {/* Meta Embedded Signup for Test Users & Admins */}
+        <Card className="border-blue-500/30 bg-blue-500/5">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#1877F2] text-white shadow-sm">
+                <svg className="h-5 w-5 fill-current" viewBox="0 0 24 24">
+                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                </svg>
+              </div>
+              <div>
+                <CardTitle className="text-base text-foreground">Meta Embedded Signup (Test Users & Developers)</CardTitle>
+                <CardDescription className="text-xs text-muted-foreground">
+                  Connect your WhatsApp Business Account using Meta Facebook Login
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Click below to launch Meta Embedded Signup with Facebook Login. If your account is added as a Developer or Tester in developers.facebook.com, Meta will automatically authorize your WhatsApp Business number.
+            </p>
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <Button
+                type="button"
+                onClick={handleLaunchEmbeddedSignup}
+                className="bg-[#1877F2] text-white hover:bg-[#166FE5] flex items-center gap-2 font-medium"
+              >
+                <svg className="h-4 w-4 fill-current" viewBox="0 0 24 24">
+                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                </svg>
+                Connect WhatsApp with Facebook
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* API Credentials */}
         <Card>
