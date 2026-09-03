@@ -69,6 +69,8 @@ export function WhatsAppConfig() {
   const [verifyToken, setVerifyToken] = useState('');
   const [pin, setPin] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
+  const [metaAppIdInput, setMetaAppIdInput] = useState(process.env.NEXT_PUBLIC_META_APP_ID || '');
+  const [metaConfigIdInput, setMetaConfigIdInput] = useState(process.env.NEXT_PUBLIC_META_CONFIG_ID || '');
 
   // True once /register has succeeded on Meta's side (timestamp set
   // in the row). When false, the saved config is metadata-only and
@@ -181,9 +183,18 @@ export function WhatsAppConfig() {
   }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
 
   const handleLaunchEmbeddedSignup = () => {
-    const appId = process.env.NEXT_PUBLIC_META_APP_ID || '';
-    const configId = process.env.NEXT_PUBLIC_META_CONFIG_ID || '';
+    const appId = metaAppIdInput.trim() || process.env.NEXT_PUBLIC_META_APP_ID || '';
+    const configId = metaConfigIdInput.trim() || process.env.NEXT_PUBLIC_META_CONFIG_ID || '';
     const redirectUri = typeof window !== 'undefined' ? `${window.location.origin}/settings` : '';
+
+    if (!appId) {
+      toast.error('Please enter your Meta App ID above to launch Embedded Signup.');
+      return;
+    }
+    if (!configId) {
+      toast.error('Please enter your Meta Configuration ID above to launch Embedded Signup.');
+      return;
+    }
 
     if (typeof window !== 'undefined' && (window as any).FB) {
       (window as any).FB.login(
@@ -199,15 +210,11 @@ export function WhatsAppConfig() {
           extras: { setup: {} },
         }
       );
-    } else if (appId && configId) {
+    } else {
       const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(
         redirectUri
       )}&config_id=${configId}&response_type=code&scope=whatsapp_business_management,whatsapp_business_messaging`;
       window.open(url, '_blank', 'width=600,height=700');
-    } else {
-      toast.info(
-        'Meta Embedded Signup pop-up: Enter your Meta App credentials below or set NEXT_PUBLIC_META_CONFIG_ID in your environment.'
-      );
     }
   };
 
@@ -604,7 +611,27 @@ export function WhatsAppConfig() {
             <p className="text-xs text-muted-foreground leading-relaxed">
               Click below to launch Meta Embedded Signup with Facebook Login. If your account is added as a Developer or Tester in developers.facebook.com, Meta will automatically authorize your WhatsApp Business number.
             </p>
-            <div className="flex flex-wrap items-center gap-3 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Meta App ID</Label>
+                <Input
+                  placeholder="e.g. 123456789012345"
+                  value={metaAppIdInput}
+                  onChange={(e) => setMetaAppIdInput(e.target.value)}
+                  className="bg-muted border-border text-xs text-foreground h-8"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Meta Configuration ID</Label>
+                <Input
+                  placeholder="e.g. 987654321098765"
+                  value={metaConfigIdInput}
+                  onChange={(e) => setMetaConfigIdInput(e.target.value)}
+                  className="bg-muted border-border text-xs text-foreground h-8"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 pt-2">
               <Button
                 type="button"
                 onClick={handleLaunchEmbeddedSignup}
