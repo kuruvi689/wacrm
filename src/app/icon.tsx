@@ -1,12 +1,8 @@
 import { ImageResponse } from "next/og";
 
-// Replaces the default Next.js favicon with the brand mark — Hostinger
-// violet rounded square + white chat-square glyph — matching the
-// sidebar logo in `src/components/layout/sidebar.tsx`. Next.js renders
-// this at build time and auto-injects <link rel="icon"> into <head>.
-//
-// This route takes precedence over src/app/favicon.ico, which is the
-// Next.js default and can stay on disk harmlessly (or be removed).
+// ROOKIE CRM favicon — gold "R" with crown on deep black background.
+// Next.js renders this at build time and auto-injects <link rel="icon">
+// into <head>. This route takes precedence over src/app/favicon.ico.
 
 export const runtime = "edge";
 export const size = { width: 32, height: 32 };
@@ -22,21 +18,20 @@ export default function Icon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#7c3aed", // primary (Hostinger-aligned purple)
+          background: "#0D0D0D", // ROOKIE deep black
           borderRadius: 6,
         }}
       >
         <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+          width="24"
+          height="24"
+          viewBox="0 0 32 32"
+          fill="#D4AA32"
         >
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          {/* Crown */}
+          <path d="M8 9l4-4 4 3 4-3 4 4v2H8V9z" />
+          {/* R letter */}
+          <path d="M11 13h6c2.2 0 4 1.3 4 3s-1.8 3-4 3l4 6h-3.5l-3.5-5.5V26h-3V13zm3 2.5v3h3c1.1 0 1.5-.6 1.5-1.5s-.4-1.5-1.5-1.5h-3z" />
         </svg>
       </div>
     ),

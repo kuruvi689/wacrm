@@ -143,7 +143,7 @@ export async function GET() {
   const live =
     checks.phone_metadata_ok &&
     (checks.waba_subscribed_to_app ?? false) &&
-    checks.locally_marked_registered
+    (checks.locally_marked_registered || config.status === 'connected')
 
   return NextResponse.json({
     live,

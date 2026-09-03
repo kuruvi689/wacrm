@@ -4,6 +4,8 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { BrandMark } from "@/components/brand-mark";
+import { GoogleSignInButton } from "@/components/auth/google-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { MessageSquare, CheckCircle, UsersRound } from "lucide-react";
+import { CheckCircle, UsersRound } from "lucide-react";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -44,6 +46,9 @@ function SignupPageInner() {
   const [success, setSuccess] = useState(false);
   const supabase = createClient();
 
+  const [resending, setResending] = useState(false);
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
+
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -60,22 +65,49 @@ function SignupPageInner() {
 
     setLoading(true);
 
-    // If we have an invite token, point Supabase's verification
-    // email back at the join page so the user can accept after
-    // verifying. Without a token, Supabase uses its default
-    // redirect (the app root).
+    // 1. Attempt admin signup (bypasses rate limits & pre-confirms)
+    try {
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, fullName }),
+      })
+      const apiData = await res.json()
+
+      if (apiData.success) {
+        // Sign in immediately
+        const { error: signInErr } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        })
+
+        if (!signInErr) {
+          const destination = inviteToken
+            ? `/join/${encodeURIComponent(inviteToken)}`
+            : "/dashboard"
+          window.location.href = destination
+          return
+        }
+      } else if (apiData.error && apiData.error.includes('already exists')) {
+        setError(apiData.error)
+        setLoading(false)
+        return
+      }
+    } catch {
+      // Fallback to client signup if endpoint fails
+    }
+
+    // 2. Fallback: Standard client signup
     const emailRedirectTo = inviteToken
-      ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
-      : undefined;
+      ? `${window.location.origin}/auth/callback?next=/join/${encodeURIComponent(inviteToken)}`
+      : `${window.location.origin}/auth/callback?next=/dashboard`;
 
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: {
-          full_name: fullName,
-        },
-        ...(emailRedirectTo ? { emailRedirectTo } : {}),
+        data: { full_name: fullName },
+        emailRedirectTo,
       },
     });
 
@@ -85,8 +117,46 @@ function SignupPageInner() {
       return;
     }
 
+    // Auto sign-in immediately
+    const { error: signInErr } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+
+    if (!signInErr) {
+      const destination = inviteToken
+        ? `/join/${encodeURIComponent(inviteToken)}`
+        : "/dashboard"
+      window.location.href = destination
+      return
+    }
+
     setSuccess(true);
     setLoading(false);
+  };
+
+  const handleResendEmail = async () => {
+    setResending(true);
+    setResendMessage(null);
+
+    const emailRedirectTo = inviteToken
+      ? `${window.location.origin}/auth/callback?next=/join/${encodeURIComponent(inviteToken)}`
+      : `${window.location.origin}/auth/callback?next=/dashboard`;
+
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email,
+      options: {
+        emailRedirectTo,
+      },
+    });
+
+    setResending(false);
+    if (error) {
+      setResendMessage(`Failed to resend: ${error.message}`);
+    } else {
+      setResendMessage("Verification email resent! Please check your inbox and spam folder.");
+    }
   };
 
   if (success) {
@@ -102,17 +172,38 @@ function SignupPageInner() {
             </CardTitle>
             <CardDescription className="text-muted-foreground">
               We&apos;ve sent a confirmation link to{" "}
-              <span className="text-foreground">{email}</span>. Please check your
-              inbox and click the link to verify your account.
+              <span className="text-foreground font-medium">{email}</span>. Please check your
+              inbox (and spam folder) and click the link to verify your account.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {resendMessage && (
+              <div className={`rounded-lg border px-4 py-3 text-sm ${
+                resendMessage.startsWith('Failed')
+                  ? 'border-red-500/20 bg-red-500/10 text-red-400'
+                  : 'border-primary/20 bg-primary/10 text-primary'
+              }`}>
+                {resendMessage}
+              </div>
+            )}
+
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleResendEmail}
+              disabled={resending}
+              className="w-full"
+            >
+              {resending ? "Sending..." : "Resend verification email"}
+            </Button>
+
             <Link
               href={
                 inviteToken
                   ? `/login?invite=${encodeURIComponent(inviteToken)}`
                   : "/login"
               }
+              className="block"
             >
               <Button
                 variant="outline"
@@ -131,11 +222,13 @@ function SignupPageInner() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+          <div className="mb-2">
             {inviteToken ? (
-              <UsersRound className="h-6 w-6 text-primary" />
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+                <UsersRound className="h-6 w-6 text-primary" />
+              </div>
             ) : (
-              <MessageSquare className="h-6 w-6 text-primary" />
+              <BrandMark size="lg" />
             )}
           </div>
           <CardTitle className="text-xl text-foreground">
@@ -144,7 +237,7 @@ function SignupPageInner() {
           <CardDescription className="text-muted-foreground">
             {inviteToken
               ? "Verify your email, then accept the invitation to join your team."
-              : "Get started with CRM Template for WhatsApp"}
+              : "Get started with ROOKIE CRM"}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -213,6 +306,21 @@ function SignupPageInner() {
                 required
                 className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
+            </div>
+
+            <GoogleSignInButton
+              inviteToken={inviteToken}
+              text="Sign up with Google"
+              onError={(err) => setError(err)}
+            />
+
+            <div className="relative my-2">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">Or sign up with email</span>
+              </div>
             </div>
 
             <Button
