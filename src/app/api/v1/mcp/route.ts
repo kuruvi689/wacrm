@@ -1,12 +1,14 @@
 // ============================================================
-// WACRM Model Context Protocol (MCP) Route Handler — Vercel Native
+// WACRM Official MCP Server (Server-Sent Events & JSON-RPC 2.0)
 //
-// Deploys directly on Vercel as part of WACRM (/api/v1/mcp & /api/mcp).
-// Exposes WACRM contacts, conversations, inbox messages, sending,
-// and broadcasts as standard MCP JSON-RPC 2.0 tools.
+// Deploys natively on Vercel App Router (/api/mcp & /api/v1/mcp).
+// Fully compatible with Cursor, Claude Desktop, Open-WebUI, Hermes,
+// and all official MCP (Model Context Protocol) clients.
 //
-// Authenticated via WACRM API Keys (`Authorization: Bearer wacrm_live_…`
-// or `?api_key=wacrm_live_…`).
+// Transports:
+//   1. SSE Transport: GET /api/mcp (Content-Type: text/event-stream)
+//   2. Message Endpoint: POST /api/mcp?sessionId=...
+//   3. Web Dashboard: GET /api/mcp (Accept: text/html)
 // ============================================================
 
 import { NextResponse } from 'next/server';
@@ -115,41 +117,108 @@ const TOOLS_SCHEMA = [
   },
 ];
 
-export async function GET(request: Request) {
-  try {
-    const url = new URL(request.url);
-    let authInfo: any = null;
-    try {
-      const ctx = await requireApiKey(request, 'contacts:read');
-      const accountName = await getAccountName(ctx.accountId);
-      authInfo = { accountId: ctx.accountId, accountName, keyId: ctx.keyId, scopes: ctx.scopes };
-    } catch {
-      // Unauthenticated discovery allowed
-    }
+// In-memory active SSE session response controllers
+const activeSseControllers = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
 
-    return NextResponse.json({
-      status: 'online',
-      server: SERVER_INFO,
-      mcp_endpoint: `${url.origin}/api/v1/mcp`,
-      authenticated: Boolean(authInfo),
-      account: authInfo?.accountName || null,
-      tools: TOOLS_SCHEMA,
-    });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'MCP GET failed' }, { status: 500 });
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const acceptHeader = request.headers.get('accept') || '';
+
+  // 1. Return HTML Dashboard for Web Browsers
+  if (acceptHeader.includes('text/html') && !url.searchParams.get('transport')) {
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <title>WACRM Model Context Protocol (MCP) Server</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #0f172a; background: #f8fafc; }
+    .card { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 24px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    code { background: #f1f5f9; color: #2563eb; padding: 3px 7px; border-radius: 4px; font-size: 0.9em; font-family: monospace; }
+    pre { background: #0f172a; color: #f8fafc; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+    .badge { display: inline-block; background: #dcfce7; color: #166534; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <h1>⚡ WACRM MCP Server</h1>
+    <span class="badge">ONLINE v0.8.0</span>
+  </div>
+  <p>Self-hosted WhatsApp CRM Model Context Protocol server running natively on Vercel App Router.</p>
+
+  <div class="card">
+    <h3>📡 Official MCP SSE Connection URL</h3>
+    <p>Use this URL in your MCP client (Cursor, Claude Desktop, Hermes, etc.):</p>
+    <code>${url.origin}/api/mcp</code>
+  </div>
+
+  <div class="card">
+    <h3>⚙️ Client Configuration Example</h3>
+    <pre>{
+  "mcpServers": {
+    "wacrm": {
+      "url": "${url.origin}/api/mcp",
+      "transport": "sse",
+      "headers": {
+        "Authorization": "Bearer wacrm_live_YOUR_API_KEY_HERE"
+      }
+    }
   }
+}</pre>
+  </div>
+</body>
+</html>`;
+    return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  }
+
+  // 2. Official SSE Stream Handler (Content-Type: text/event-stream)
+  const sessionId = 'sse_' + Math.random().toString(36).substring(2, 15);
+  const mcpPostUrl = `${url.origin}${url.pathname}?sessionId=${sessionId}`;
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      activeSseControllers.set(sessionId, controller);
+      // Emit initial MCP SSE endpoint event
+      controller.enqueue(encoder.encode(`event: endpoint\ndata: ${mcpPostUrl}\n\n`));
+
+      // Keep-alive heartbeat ping every 15 seconds
+      const interval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`: ping\n\n`));
+        } catch {
+          clearInterval(interval);
+          activeSseControllers.delete(sessionId);
+        }
+      }, 15000);
+    },
+    cancel() {
+      activeSseControllers.delete(sessionId);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': '*',
+    },
+  });
 }
 
 export async function POST(request: Request) {
   try {
-    const ctx = await requireApiKey(request);
+    const url = new URL(request.url);
+    const sessionId = url.searchParams.get('sessionId');
     const body = await request.json();
 
     const { id, method, params } = body || {};
 
     // 1. Initialize Handshake
     if (method === 'initialize') {
-      return NextResponse.json({
+      const responsePayload = {
         jsonrpc: '2.0',
         id: id ?? null,
         result: {
@@ -157,25 +226,32 @@ export async function POST(request: Request) {
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
         },
-      });
+      };
+      sendSseEvent(sessionId, responsePayload);
+      return NextResponse.json(responsePayload);
     }
 
     // 2. Ping
     if (method === 'ping') {
-      return NextResponse.json({ jsonrpc: '2.0', id: id ?? null, result: {} });
+      const responsePayload = { jsonrpc: '2.0', id: id ?? null, result: {} };
+      sendSseEvent(sessionId, responsePayload);
+      return NextResponse.json(responsePayload);
     }
 
     // 3. List Tools
     if (method === 'tools/list') {
-      return NextResponse.json({
+      const responsePayload = {
         jsonrpc: '2.0',
         id: id ?? null,
         result: { tools: TOOLS_SCHEMA },
-      });
+      };
+      sendSseEvent(sessionId, responsePayload);
+      return NextResponse.json(responsePayload);
     }
 
     // 4. Call Tool
     if (method === 'tools/call') {
+      const ctx = await requireApiKey(request);
       const toolName = params?.name;
       const args = params?.arguments || {};
 
@@ -312,13 +388,16 @@ export async function POST(request: Request) {
           });
       }
 
-      return NextResponse.json({
+      const responsePayload = {
         jsonrpc: '2.0',
         id: id ?? null,
         result: {
           content: [{ type: 'text', text: JSON.stringify(resultData, null, 2) }],
         },
-      });
+      };
+
+      sendSseEvent(sessionId, responsePayload);
+      return NextResponse.json(responsePayload);
     }
 
     return NextResponse.json({
@@ -335,5 +414,18 @@ export async function POST(request: Request) {
       },
       { status: err.status || 400 },
     );
+  }
+}
+
+function sendSseEvent(sessionId: string | null, payload: any) {
+  if (!sessionId) return;
+  const controller = activeSseControllers.get(sessionId);
+  if (controller) {
+    try {
+      const encoder = new TextEncoder();
+      controller.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(payload)}\n\n`));
+    } catch {
+      activeSseControllers.delete(sessionId);
+    }
   }
 }
