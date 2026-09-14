@@ -18,9 +18,9 @@ import {
   findOrCreateContact,
   getContactById,
   resolveAuditUserId,
-} from '@/lib/api-v1/contacts';
-import { sendMessage } from '@/lib/whatsapp/send-message';
-import { parseListParams, keysetFilter, buildPage } from '@/lib/api/v1/pagination';
+} from '@/lib/api/v1/contacts';
+import { resolveConversationByPhone } from '@/lib/whatsapp/resolve-conversation';
+import { sendMessageToConversation } from '@/lib/whatsapp/send-message';
 
 const SERVER_INFO = {
   name: 'wacrm-mcp',
@@ -41,7 +41,6 @@ const TOOLS_SCHEMA = [
       properties: {
         search: { type: 'string', description: 'Free-text search query over name or phone number.' },
         limit: { type: 'number', description: 'Maximum items to return (1–100, default 50).' },
-        cursor: { type: 'string', description: 'Pagination cursor from previous list call.' },
       },
     },
   },
@@ -207,7 +206,7 @@ export async function POST(request: Request) {
 
           const { data, error } = await query;
           if (error) throw new Error(`Database error: ${error.message}`);
-          resultData = { contacts: (data || []).map(serializeContact) };
+          resultData = { contacts: (data || []).map((row) => serializeContact(row as any)) };
           break;
         }
 
@@ -215,21 +214,21 @@ export async function POST(request: Request) {
           if (!args.id) throw new Error('Contact id is required');
           const contact = await getContactById(ctx.supabase, ctx.accountId, args.id);
           if (!contact) throw new Error('Contact not found');
-          resultData = { contact: serializeContact(contact) };
+          resultData = { contact: serializeContact(contact as any) };
           break;
         }
 
         case 'create_contact': {
           if (!args.phone) throw new Error('Phone number is required');
           const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
-          const { contact, created } = await findOrCreateContact(
+          const { id: contactId, created } = await findOrCreateContact(
             ctx.supabase,
             ctx.accountId,
             auditUserId,
-            args.phone,
-            args.name,
+            { phone: args.phone, name: args.name },
           );
-          resultData = { created, contact: serializeContact(contact) };
+          const contact = await getContactById(ctx.supabase, ctx.accountId, contactId);
+          resultData = { created, contact: contact ? serializeContact(contact as any) : { id: contactId } };
           break;
         }
 
@@ -290,16 +289,16 @@ export async function POST(request: Request) {
         case 'send_message': {
           if (!args.to || !args.message) throw new Error('both "to" and "message" are required');
           const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
-          const { contact } = await findOrCreateContact(
+          const resolved = await resolveConversationByPhone(
             ctx.supabase,
             ctx.accountId,
             auditUserId,
             args.to,
           );
-          const sendRes = await sendMessage({
-            accountId: ctx.accountId,
-            to: contact.phone,
-            text: args.message,
+          const sendRes = await sendMessageToConversation(ctx.supabase, ctx.accountId, {
+            conversationId: resolved.conversationId,
+            messageType: 'text',
+            contentText: args.message,
           });
           resultData = { success: true, sendResult: sendRes };
           break;
