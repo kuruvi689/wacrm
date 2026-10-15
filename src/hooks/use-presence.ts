@@ -1,86 +1,62 @@
-"use client";
-
-import { useCallback, useEffect, useState } from "react";
-import type { RealtimeChannel } from "@supabase/supabase-js";
-
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { useAuth } from "@/hooks/use-auth";
-import {
-  derivePresence,
-  type PresenceRow,
-  type PresenceStatus,
-  type StoredPresence,
-} from "@/lib/presence";
 
-// How often the viewer re-derives presence locally. The online→offline
-// transition fires NO database event (it's just the clock passing the
-// staleness threshold), so without this tick a member who closes their
-// tab would appear online forever. ~15s keeps "offline" responsive
-// without busy-spinning.
-const RE_DERIVE_MS = 15_000;
+export type StoredPresence = "online" | "away" | "offline";
 
-type PresenceMap = Map<string, PresenceRow>;
-
-interface UsePresenceResult {
-  /** Derived status for one member (defaults to offline if unseen). */
-  getPresence: (userId: string) => PresenceStatus;
-  /** Raw row for tooltips ("last seen …"). */
-  getRow: (userId: string) => PresenceRow | undefined;
-  /**
-   * The clock value the hook is currently deriving against. Pass this
-   * to `presenceLabel` / `formatLastSeen` so labels stay in lockstep
-   * with the dots (both advance on the same ~15s re-derive tick).
-   */
-  now: number;
+export interface PresenceRow {
+  status: StoredPresence;
+  last_seen_at: string;
 }
 
-/**
- * Live presence for every member of the caller's account. Reads the
- * `member_presence` table (RLS-scoped to the account), subscribes to
- * Realtime changes, and re-derives "offline" on a local timer.
- *
- * Account comes from useAuth; pass `enabled: false` to opt a consumer
- * out (e.g. while a parent sheet is closed).
- */
-export function usePresence(enabled = true): UsePresenceResult {
-  const { accountId } = useAuth();
+const ONLINE_WINDOW_MS = 60 * 1000;
+const AWAY_WINDOW_MS = 5 * 60 * 1000;
+const RE_DERIVE_MS = 15 * 1000;
 
-  // Presence rows keyed by user_id, held in immutable state — each
-  // update replaces the Map so React renders and the derived getters
-  // recompute. No ref/version dance needed.
-  const [rows, setRows] = useState<PresenceMap>(() => new Map());
+export type DerivedPresence = "online" | "away" | "offline";
 
-  // `now` ticks so derivePresence re-evaluates staleness over time.
-  const [now, setNow] = useState(() => Date.now());
+export function derivePresence(row: PresenceRow | undefined, nowMs: number): DerivedPresence {
+  if (!row) return "offline";
+  const lastSeenMs = new Date(row.last_seen_at).getTime();
+  if (isNaN(lastSeenMs)) return "offline";
+  const ageMs = nowMs - lastSeenMs;
+  if (ageMs < 0) return row.status === "away" ? "away" : "online";
+  if (ageMs <= ONLINE_WINDOW_MS) return row.status === "away" ? "away" : "online";
+  if (ageMs <= AWAY_WINDOW_MS) return "away";
+  return "offline";
+}
 
-  const active = enabled && !!accountId;
+export function usePresence(accountId?: string | null | undefined): {
+  presenceMap: Map<string, PresenceRow>;
+  getPresence: (userId: string | null | undefined) => DerivedPresence;
+  getRow: (userId: string | null | undefined) => PresenceRow | undefined;
+  now: number;
+} {
+  const [rows, setRows] = useState<Map<string, PresenceRow>>(() => new Map());
+  const [now, setNow] = useState<number>(() => Date.now());
 
   useEffect(() => {
-    if (!active || !accountId) return;
+    if (!accountId) return;
 
     const supabase = createClient();
     let cancelled = false;
 
-    const applyRow = (row: {
+    const applyRow = (payload: {
       user_id: string;
       status: StoredPresence;
       last_seen_at: string;
     }) => {
+      if (!payload.user_id) return;
       setRows((prev) => {
         const next = new Map(prev);
-        next.set(row.user_id, {
-          status: row.status,
-          last_seen_at: row.last_seen_at,
+        next.set(payload.user_id, {
+          status: payload.status,
+          last_seen_at: payload.last_seen_at,
         });
         return next;
       });
     };
 
-    // Subscribe FIRST, then snapshot. The snapshot MERGES into whatever
-    // Realtime has already delivered (keeping the newer last_seen_at)
-    // rather than replacing the map — so an event that lands while the
-    // fetch is in flight isn't clobbered by a staler snapshot row.
-    const channel: RealtimeChannel = supabase
+    const channel = supabase
       .channel(`presence:${accountId}`)
       .on(
         "postgres_changes",
@@ -120,7 +96,7 @@ export function usePresence(enabled = true): UsePresenceResult {
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error) {
-          console.error("[usePresence] initial fetch error:", error.message);
+          console.warn("[usePresence] presence table check:", error.message);
           return;
         }
         setRows((prev) => {
@@ -132,8 +108,6 @@ export function usePresence(enabled = true): UsePresenceResult {
               last_seen_at: r.last_seen_at as string,
             };
             const existing = next.get(userId);
-            // A live event that arrived first must win over a staler
-            // snapshot row.
             if (
               !existing ||
               new Date(incoming.last_seen_at) >= new Date(existing.last_seen_at)
@@ -150,22 +124,19 @@ export function usePresence(enabled = true): UsePresenceResult {
     return () => {
       cancelled = true;
       clearInterval(tick);
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
-  }, [active, accountId]);
+  }, [accountId]);
 
-  const getRow = useCallback(
-    (userId: string): PresenceRow | undefined => rows.get(userId),
-    [rows],
-  );
+  const getPresence = (userId: string | null | undefined): DerivedPresence => {
+    if (!userId) return "offline";
+    return derivePresence(rows.get(userId), now);
+  };
 
-  const getPresence = useCallback(
-    (userId: string): PresenceStatus => {
-      const row = rows.get(userId);
-      return derivePresence(row?.status, row?.last_seen_at, now);
-    },
-    [rows, now],
-  );
+  const getRow = (userId: string | null | undefined): PresenceRow | undefined => {
+    if (!userId) return undefined;
+    return rows.get(userId);
+  };
 
-  return { getPresence, getRow, now };
+  return { presenceMap: rows, getPresence, getRow, now };
 }

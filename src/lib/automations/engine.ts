@@ -706,8 +706,32 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
     }
     case 'contact_field': {
       if (!args.contactId || !cfg.operand) return false
-      // Scope to the account so the condition can't be turned into a
-      // cross-tenant read oracle via the service-role client.
+
+      // Custom fields: `custom:<custom_field_id>` or UUID custom field ID
+      let customFieldId: string | null = null
+      if (cfg.operand.startsWith('custom:')) {
+        customFieldId = cfg.operand.slice('custom:'.length)
+      } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cfg.operand)) {
+        customFieldId = cfg.operand
+      }
+
+      if (customFieldId) {
+        const { data: customVal } = await db
+          .from('contact_custom_values')
+          .select('value')
+          .eq('contact_id', args.contactId)
+          .eq('custom_field_id', customFieldId)
+          .maybeSingle()
+        const v = customVal?.value
+        return v != null && String(v) === String(cfg.value ?? '')
+      }
+
+      // Built-in contact columns
+      const ALLOWED_CONTACT_FIELDS = new Set(['name', 'email', 'company', 'phone'])
+      if (!ALLOWED_CONTACT_FIELDS.has(cfg.operand)) {
+        return false
+      }
+
       const { data } = await db
         .from('contacts')
         .select(cfg.operand)

@@ -50,19 +50,33 @@ export function PresenceHeartbeat() {
 
     const beat = async () => {
       if (cancelled) return;
+      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+
       // Coalesce bursts: a tab refocus fires visibilitychange AND focus
       // together, so skip a beat within 1s of the last to avoid two RPCs
       // in the same frame. The 30s interval is never affected.
       const t = Date.now();
       if (t - lastBeatAt < 1_000) return;
       lastBeatAt = t;
-      const { error } = await supabase.rpc("touch_presence", {
-        p_status: currentStatus(),
-      });
-      if (error && !cancelled) {
-        // Non-fatal: presence is best-effort. Log once per failure so a
-        // misconfigured RPC is visible without spamming.
-        console.error("[PresenceHeartbeat] touch_presence failed:", error.message);
+
+      try {
+        const { error } = await supabase.rpc("touch_presence", {
+          p_status: currentStatus(),
+        });
+        if (error && !cancelled) {
+          const isNetworkError =
+            error.message?.includes("Failed to fetch") ||
+            error.message?.includes("NetworkError") ||
+            (typeof navigator !== "undefined" && !navigator.onLine);
+
+          if (!isNetworkError) {
+            // Non-fatal: presence is best-effort. Log non-network RPC errors
+            // (e.g., misconfigured schema or RPC bugs) without spamming on offline.
+            console.error("[PresenceHeartbeat] touch_presence failed:", error.message);
+          }
+        }
+      } catch {
+        // Silently absorb unhandled network exceptions during tab sleep/wake
       }
     };
 

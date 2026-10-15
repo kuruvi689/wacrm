@@ -185,13 +185,46 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { phone_number_id, waba_id, access_token, verify_token, pin } = body
+    let { phone_number_id, waba_id, access_token, verify_token, pin } = body
 
-    if (!access_token || !phone_number_id) {
+    if (!phone_number_id) {
       return NextResponse.json(
-        { error: 'access_token and phone_number_id are required' },
+        { error: 'phone_number_id is required' },
         { status: 400 }
       )
+    }
+
+    // Look up any pre-existing row for this account so we know whether
+    // an access token is already saved or if this number is registered.
+    const { data: existing } = await supabase
+      .from('whatsapp_config')
+      .select('id, registered_at, phone_number_id, access_token')
+      .eq('account_id', accountId)
+      .maybeSingle()
+
+    const isMaskedToken =
+      !access_token ||
+      access_token === '••••••••••••••••••••' ||
+      access_token.trim() === ''
+
+    if (isMaskedToken) {
+      if (!existing?.access_token) {
+        return NextResponse.json(
+          { error: 'access_token and phone_number_id are required for initial setup' },
+          { status: 400 }
+        )
+      }
+      try {
+        access_token = decrypt(existing.access_token)
+      } catch (err) {
+        return NextResponse.json(
+          {
+            error:
+              'Failed to decrypt stored access token. Please re-enter your Access Token to save changes.',
+          },
+          { status: 400 }
+        )
+      }
     }
 
     if (pin !== undefined && pin !== null && pin !== '') {
@@ -268,15 +301,6 @@ export async function POST(request: Request) {
         { status: 500 }
       )
     }
-
-    // Look up any pre-existing row for this account so we know whether
-    // this number is already registered with Meta — if so we can skip
-    // /register when the user didn't provide a PIN this time around.
-    const { data: existing } = await supabase
-      .from('whatsapp_config')
-      .select('id, registered_at, phone_number_id')
-      .eq('account_id', accountId)
-      .maybeSingle()
 
     const sameNumber =
       existing?.phone_number_id === phone_number_id &&

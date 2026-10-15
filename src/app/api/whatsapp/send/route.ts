@@ -244,6 +244,16 @@ async function findOrCreateConversation(
     .single()
 
   if (error) {
+    // Race condition fallback: If another request created the conversation concurrently, re-query it
+    const { data: reQuery } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('contact_id', contactId)
+      .maybeSingle()
+
+    if (reQuery) return reQuery.id
+
     console.error('Error creating conversation for contact send:', error.message)
     return null
   }
