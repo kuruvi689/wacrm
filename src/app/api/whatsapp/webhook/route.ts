@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
@@ -86,6 +87,15 @@ interface WhatsAppWebhookEntry {
   }>
 }
 
+// Constant-time comparison against WHATSAPP_WEBHOOK_VERIFY_TOKEN (if set).
+function matchesPlatformVerifyToken(supplied: string): boolean {
+  const expected = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN
+  if (!expected) return false
+  const a = Buffer.from(supplied)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
 // GET - Webhook verification
 export async function GET(request: Request) {
   try {
@@ -99,6 +109,16 @@ export async function GET(request: Request) {
         { error: 'Missing verification parameters' },
         { status: 400 }
       )
+    }
+
+    // Platform-wide token: with Embedded Signup there is ONE webhook per
+    // Meta app (not per customer), verified once in the Meta dashboard.
+    // Set WHATSAPP_WEBHOOK_VERIFY_TOKEN to the token you typed there.
+    if (matchesPlatformVerifyToken(verifyToken)) {
+      return new Response(challenge, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      })
     }
 
     // Fetch all whatsapp configs to check verify tokens

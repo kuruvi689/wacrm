@@ -178,6 +178,42 @@ export async function subscribeWabaToApp(
   }
 }
 
+export interface ExchangeEmbeddedSignupCodeArgs {
+  appId: string
+  appSecret: string
+  /** Short-lived `code` returned by FB.login() in Embedded Signup. */
+  code: string
+}
+
+/**
+ * Exchange the one-time Embedded Signup `code` for the customer's
+ * business access token. The app secret is sent in a POST body (never a
+ * URL), and the token is returned to the caller only — it must not be
+ * logged or sent to the browser.
+ */
+export async function exchangeEmbeddedSignupCode(
+  args: ExchangeEmbeddedSignupCodeArgs
+): Promise<string> {
+  const { appId, appSecret, code } = args
+  const response = await fetch(`${META_API_BASE}/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: appId,
+      client_secret: appSecret,
+      code,
+    }),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = (await response.json()) as { access_token?: string }
+  if (!data.access_token) {
+    throw new Error('Meta did not return an access token')
+  }
+  return data.access_token
+}
+
 export interface GetSubscribedAppsArgs {
   wabaId: string
   accessToken: string

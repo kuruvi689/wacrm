@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
+import { useEmbeddedSignup } from './use-embedded-signup';
 import {
   Accordion,
   AccordionItem,
@@ -35,16 +36,6 @@ const MASKED_TOKEN = '••••••••••••••••';
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
-
-/** The slice of Meta's JS SDK (`window.FB`) used by Embedded Signup. */
-interface FacebookSdkWindow extends Window {
-  FB?: {
-    login: (
-      callback: (response: { authResponse?: { code?: string } | null }) => void,
-      options: Record<string, unknown>,
-    ) => void;
-  };
-}
 
 export function WhatsAppConfig() {
   const t = useTranslations('Settings.whatsapp');
@@ -79,8 +70,13 @@ export function WhatsAppConfig() {
   const [verifyToken, setVerifyToken] = useState('');
   const [pin, setPin] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
-  const [metaAppIdInput, setMetaAppIdInput] = useState(process.env.NEXT_PUBLIC_META_APP_ID || '');
-  const [metaConfigIdInput, setMetaConfigIdInput] = useState(process.env.NEXT_PUBLIC_META_CONFIG_ID || '');
+  // Public Meta ids. When the operator has set them in the environment the
+  // customer just sees a Connect button; the inputs only appear as a
+  // fallback for self-hosters who have not.
+  const envMetaAppId = process.env.NEXT_PUBLIC_META_APP_ID || '';
+  const envMetaConfigId = process.env.NEXT_PUBLIC_META_CONFIG_ID || '';
+  const [metaAppIdInput, setMetaAppIdInput] = useState(envMetaAppId);
+  const [metaConfigIdInput, setMetaConfigIdInput] = useState(envMetaConfigId);
 
   // True once /register has succeeded on Meta's side (timestamp set
   // in the row). When false, the saved config is metadata-only and
@@ -192,42 +188,13 @@ export function WhatsAppConfig() {
     fetchConfig(accountId);
   }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
 
-  const handleLaunchEmbeddedSignup = () => {
-    const appId = metaAppIdInput.trim() || process.env.NEXT_PUBLIC_META_APP_ID || '';
-    const configId = metaConfigIdInput.trim() || process.env.NEXT_PUBLIC_META_CONFIG_ID || '';
-    const redirectUri = typeof window !== 'undefined' ? `${window.location.origin}/settings` : '';
-
-    if (!appId) {
-      toast.error('Please enter your Meta App ID above to launch Embedded Signup.');
-      return;
-    }
-    if (!configId) {
-      toast.error('Please enter your Meta Configuration ID above to launch Embedded Signup.');
-      return;
-    }
-
-    const fb = typeof window !== 'undefined' ? (window as FacebookSdkWindow).FB : undefined;
-    if (fb) {
-      fb.login(
-        (response) => {
-          if (response.authResponse?.code) {
-            toast.success('Meta Embedded Signup authorization received!');
-          }
-        },
-        {
-          config_id: configId,
-          response_type: 'code',
-          override_default_response_type: true,
-          extras: { setup: {} },
-        }
-      );
-    } else {
-      const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(
-        redirectUri
-      )}&config_id=${configId}&response_type=code&scope=whatsapp_business_management,whatsapp_business_messaging`;
-      window.open(url, '_blank', 'width=600,height=700');
-    }
-  };
+  const { launch: handleLaunchEmbeddedSignup, launching: signingUp } = useEmbeddedSignup({
+    appId: metaAppIdInput.trim(),
+    configId: metaConfigIdInput.trim(),
+    onConnected: () => {
+      if (accountId) void fetchConfig(accountId);
+    },
+  });
 
   async function handleSave() {
     if (!phoneNumberId.trim()) {
@@ -601,7 +568,7 @@ export function WhatsAppConfig() {
           </Alert>
         )}
 
-        {/* Meta Embedded Signup for Test Users & Admins */}
+        {/* Meta Embedded Signup */}
         <Card className="border-blue-500/30 bg-blue-500/5">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-3">
@@ -611,47 +578,50 @@ export function WhatsAppConfig() {
                 </svg>
               </div>
               <div>
-                <CardTitle className="text-base text-foreground">Meta Embedded Signup (Test Users & Developers)</CardTitle>
+                <CardTitle className="text-base text-foreground">Connect with Facebook (recommended)</CardTitle>
                 <CardDescription className="text-xs text-muted-foreground">
-                  Connect your WhatsApp Business Account using Meta Facebook Login
+                  Link your WhatsApp Business number in a few clicks — no tokens to copy
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Click below to launch Meta Embedded Signup with Facebook Login. If your account is added as a Developer or Tester in developers.facebook.com, Meta will automatically authorize your WhatsApp Business number.
+              Sign in with Facebook, choose or create your WhatsApp Business account and phone number, and you are connected. Your access token is stored encrypted on the server and never shown in the browser.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Meta App ID</Label>
-                <Input
-                  placeholder="e.g. 123456789012345"
-                  value={metaAppIdInput}
-                  onChange={(e) => setMetaAppIdInput(e.target.value)}
-                  className="bg-muted border-border text-xs text-foreground h-8"
-                />
+            {(!envMetaAppId || !envMetaConfigId) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Meta App ID</Label>
+                  <Input
+                    placeholder="e.g. 123456789012345"
+                    value={metaAppIdInput}
+                    onChange={(e) => setMetaAppIdInput(e.target.value)}
+                    className="bg-muted border-border text-xs text-foreground h-8"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Meta Configuration ID</Label>
+                  <Input
+                    placeholder="e.g. 987654321098765"
+                    value={metaConfigIdInput}
+                    onChange={(e) => setMetaConfigIdInput(e.target.value)}
+                    className="bg-muted border-border text-xs text-foreground h-8"
+                  />
+                </div>
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Meta Configuration ID</Label>
-                <Input
-                  placeholder="e.g. 987654321098765"
-                  value={metaConfigIdInput}
-                  onChange={(e) => setMetaConfigIdInput(e.target.value)}
-                  className="bg-muted border-border text-xs text-foreground h-8"
-                />
-              </div>
-            </div>
+            )}
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <Button
                 type="button"
                 onClick={handleLaunchEmbeddedSignup}
+                disabled={signingUp}
                 className="bg-[#1877F2] text-white hover:bg-[#166FE5] flex items-center gap-2 font-medium"
               >
                 <svg className="h-4 w-4 fill-current" viewBox="0 0 24 24">
                   <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
                 </svg>
-                Connect WhatsApp with Facebook
+                {signingUp ? 'Connecting…' : 'Connect WhatsApp with Facebook'}
               </Button>
             </div>
           </CardContent>
