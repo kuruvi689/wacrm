@@ -120,6 +120,12 @@ function makeSupabaseMock() {
 
 let supabaseMock = makeSupabaseMock()
 
+// The workspace gate has its own tests (route-gate.test.ts); here the
+// workspace is always active so these tests stay about the send route.
+vi.mock('@/lib/saas/route-gate', () => ({
+  workspaceBlockResponse: async () => null,
+}))
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
 }))

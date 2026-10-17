@@ -1,3 +1,4 @@
+import { workspaceBlockResponse } from '@/lib/saas/route-gate'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
@@ -30,6 +31,9 @@ export async function GET(
         { status: 401 }
       )
     }
+
+    const blocked = await workspaceBlockResponse(supabase, user.id)
+    if (blocked) return blocked
 
     // Resolve the caller's account_id — whatsapp_config is one-per-
     // account post-multi-user, so a teammate fetching media for a

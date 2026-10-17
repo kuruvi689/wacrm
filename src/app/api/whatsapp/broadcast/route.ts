@@ -1,3 +1,4 @@
+import { workspaceBlockResponse } from '@/lib/saas/route-gate'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
@@ -70,6 +71,9 @@ export async function POST(request: Request) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    const blocked = await workspaceBlockResponse(supabase, user.id)
+    if (blocked) return blocked
 
     // Per-user broadcast budget. Note: this limits how often a user
     // can *start* a campaign, not how many messages go out inside

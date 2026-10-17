@@ -1,3 +1,4 @@
+import { workspaceBlockResponse } from '@/lib/saas/route-gate'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
@@ -29,6 +30,9 @@ export async function GET(
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  const blocked = await workspaceBlockResponse(supabase, user.id)
+  if (blocked) return blocked
 
   // Confirm flow exists + caller owns it (RLS does this) before doing
   // the run query — gives us a clean 404 instead of empty array.

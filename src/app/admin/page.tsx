@@ -13,7 +13,7 @@ export default async function AdminPage() {
 
   if (!user) redirect('/login')
   // 404 rather than 403 so the console's existence isn't advertised.
-  if (!isPlatformAdmin(user.email)) notFound()
+  if (!isPlatformAdmin(user)) notFound()
 
   return <AdminConsole />
 }

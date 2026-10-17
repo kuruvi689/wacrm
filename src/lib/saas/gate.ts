@@ -32,7 +32,7 @@ export async function resolveWorkspaceGate(): Promise<WorkspaceGate> {
     .maybeSingle()
   if (!account) return { kind: 'ok', isPlatformAdmin: false }
 
-  const operator = isPlatformAdmin(user.email)
+  const operator = isPlatformAdmin(user)
 
   // Operators are never locked out of their own console by a plan state.
   if (!operator) {

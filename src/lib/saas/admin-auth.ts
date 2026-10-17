@@ -30,7 +30,7 @@ export async function requirePlatformAdmin(): Promise<
   if (!user) {
     return { ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   }
-  if (!isPlatformAdmin(user.email)) {
+  if (!isPlatformAdmin(user)) {
     return { ok: false, response: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
   }
 

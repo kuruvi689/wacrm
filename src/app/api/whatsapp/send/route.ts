@@ -1,3 +1,4 @@
+import { workspaceBlockResponse } from '@/lib/saas/route-gate'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import {
@@ -35,6 +36,9 @@ export async function POST(request: Request) {
         { status: 401 }
       )
     }
+
+    const blocked = await workspaceBlockResponse(supabase, user.id)
+    if (blocked) return blocked
 
     // Per-user rate limit. Bucket key is scoped to this route so
     // `/broadcast` has an independent budget.

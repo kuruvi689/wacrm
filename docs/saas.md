@@ -26,8 +26,10 @@ Open `/admin` (404 for everyone else):
 ### Setup
 
 1. Apply `supabase/migrations/037_saas_tenancy.sql`.
-2. Set `PLATFORM_ADMIN_EMAILS=you@yourdomain.com` (comma-separated) and
-   redeploy. Sign in with that email to see `/admin`.
+2. Set `PLATFORM_ADMIN_USER_IDS=<your Supabase user UUID>` (preferred) or
+   `PLATFORM_ADMIN_EMAILS=you@yourdomain.com` (comma-separated; the email
+   must be verified — if Supabase email confirmation is off, use the
+   user id) and redeploy. Sign in to see `/admin`.
 3. In `/admin` → *New-signup defaults*, set e.g. 14 trial days,
    3 members, 1000 contacts. Leave all empty to keep self-host
    behaviour (no trial, no limits).
@@ -40,7 +42,7 @@ skipped.
 | Rule | Where it is enforced |
 |---|---|
 | Suspended / expired trial blocks the dashboard | `(dashboard)/layout.tsx` redirect |
-| …and blocks every cookie-auth API route | `getCurrentAccount()` |
+| …and blocks every cookie-auth API route | `getCurrentAccount()`, or `workspaceBlockResponse()` on routes that authenticate directly (WhatsApp send/broadcast/react/media/templates, flow runs) |
 | …and blocks public-API / MCP keys | `requireApiKey()` |
 | Contact cap | Postgres trigger on `contacts` (covers UI, CSV import, API, MCP) |
 | Member cap | Postgres trigger on `profiles` (covers invite acceptance) |
@@ -50,6 +52,12 @@ Hitting a cap raises a Postgres error with the prefix `plan_limit:`.
 
 ## Not done yet (known gaps)
 
+- **Database-level suspension.** The suspended/expired gate lives in the
+  app layer. Service-role paths (inbound webhook, cron jobs, automation
+  engine) intentionally keep running, and a direct PostgREST call with a
+  suspended tenant's JWT is not blocked by RLS. Hardening that means
+  adding a status check to `is_account_member()` and a fail-closed
+  workspace-state RPC; it needs testing against a live database first.
 - **Payments / plan self-service** — by request, deferred.
 - **Friendly "upgrade" UX when a cap is hit** — the DB blocks the write
   but most screens will show a generic failure toast.

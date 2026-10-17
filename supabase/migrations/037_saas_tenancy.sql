@@ -131,6 +131,10 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  -- Serialise concurrent inserts for the same account; without this two
+  -- simultaneous inserts both read the same count and overshoot the cap.
+  PERFORM pg_advisory_xact_lock(hashtext(NEW.account_id::text));
+
   SELECT max_contacts INTO v_limit FROM accounts WHERE id = NEW.account_id;
   IF v_limit IS NULL THEN
     RETURN NEW;
@@ -169,6 +173,10 @@ BEGIN
   IF TG_OP = 'UPDATE' AND NEW.account_id IS NOT DISTINCT FROM OLD.account_id THEN
     RETURN NEW;
   END IF;
+
+  -- Serialise concurrent inserts for the same account; without this two
+  -- simultaneous inserts both read the same count and overshoot the cap.
+  PERFORM pg_advisory_xact_lock(hashtext(NEW.account_id::text));
 
   SELECT max_members INTO v_limit FROM accounts WHERE id = NEW.account_id;
   IF v_limit IS NULL THEN

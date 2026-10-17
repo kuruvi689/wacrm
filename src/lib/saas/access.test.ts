@@ -38,17 +38,26 @@ describe('evaluateAccess', () => {
 })
 
 describe('isPlatformAdmin', () => {
-  it('matches case-insensitively against a comma-separated list', () => {
-    expect(isPlatformAdmin('Boss@Example.com', 'a@x.com, boss@example.com')).toBe(true)
+  const verified = { id: 'u1', email: 'Boss@Example.com', email_confirmed_at: '2026-01-01T00:00:00Z' }
+
+  it('matches a verified email case-insensitively', () => {
+    expect(isPlatformAdmin(verified, { emails: 'a@x.com, boss@example.com' })).toBe(true)
   })
 
-  it('rejects emails not on the list', () => {
-    expect(isPlatformAdmin('eve@example.com', 'boss@example.com')).toBe(false)
+  it('rejects an UNVERIFIED email even when it is on the list', () => {
+    expect(isPlatformAdmin({ ...verified, email_confirmed_at: null }, { emails: 'boss@example.com' })).toBe(false)
   })
 
-  it('rejects when nothing is configured or the email is missing', () => {
-    expect(isPlatformAdmin('boss@example.com', undefined)).toBe(false)
-    expect(isPlatformAdmin('boss@example.com', '')).toBe(false)
-    expect(isPlatformAdmin(null, 'boss@example.com')).toBe(false)
+  it('accepts a listed user id regardless of email state', () => {
+    expect(isPlatformAdmin({ id: 'u1', email: null }, { userIds: 'u0, u1' })).toBe(true)
+  })
+
+  it('rejects users that are on neither list', () => {
+    expect(isPlatformAdmin({ ...verified, email: 'eve@example.com' }, { emails: 'boss@example.com', userIds: 'u9' })).toBe(false)
+  })
+
+  it('rejects when nothing is configured or there is no user', () => {
+    expect(isPlatformAdmin(verified, {})).toBe(false)
+    expect(isPlatformAdmin(null, { emails: 'boss@example.com' })).toBe(false)
   })
 })
