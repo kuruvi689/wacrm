@@ -34,6 +34,7 @@ import { findActiveKeyByHash, touchLastUsed } from '@/lib/api-keys/store';
 import { hashApiKey, looksLikeApiKey } from '@/lib/api-keys/keys';
 import { hasScope, type ApiScope } from '@/lib/api-keys/scopes';
 import { forbidden, rateLimited, unauthorized } from '@/lib/api/v1/respond';
+import { BLOCK_MESSAGES, evaluateAccess } from '@/lib/saas/access';
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 
 export interface ApiKeyContext {
@@ -103,6 +104,20 @@ export async function requireApiKey(
 
   if (scope && !hasScope(row.scopes, scope)) {
     throw forbidden(`This API key is missing the '${scope}' scope`);
+  }
+
+  // SaaS gate: keys of a suspended / expired-trial workspace stop working.
+  const { data: plan } = await supabaseAdmin()
+    .from('accounts')
+    .select('status, trial_ends_at')
+    .eq('id', row.account_id)
+    .maybeSingle();
+  const access = evaluateAccess({
+    status: plan?.status ?? 'active',
+    trial_ends_at: plan?.trial_ends_at ?? null,
+  });
+  if (!access.allowed) {
+    throw forbidden(BLOCK_MESSAGES[access.reason]);
   }
 
   touchLastUsed(row.id);

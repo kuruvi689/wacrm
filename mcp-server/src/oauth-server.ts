@@ -58,7 +58,7 @@ function getEnvConfig(apiKeyOverride?: string): Config {
   };
 }
 
-function parseJsonBody(req: http.IncomingMessage): Promise<any> {
+function parseJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (chunk) => {
@@ -270,10 +270,13 @@ const server = http.createServer(async (req, res) => {
     // ------------------------------------------------------------
     if (pathname === '/oauth/token' && req.method === 'POST') {
       const body = await parseJsonBody(req);
-      const code = body.code || query.code;
+      const bodyCode = typeof body.code === 'string' ? body.code : '';
+      const bodyApiKey = typeof body.api_key === 'string' ? body.api_key : '';
+      const queryCode = Array.isArray(query.code) ? query.code[0] : query.code;
+      const code = bodyCode || queryCode || '';
       const authRecord = code ? authCodes.get(code) : undefined;
 
-      const apiKey = authRecord?.apiKey || process.env.WACRM_API_KEY || body.api_key || 'wacrm_default_key';
+      const apiKey = authRecord?.apiKey || process.env.WACRM_API_KEY || bodyApiKey || 'wacrm_default_key';
       const token = 'at_wacrm_' + crypto.randomBytes(24).toString('hex');
 
       accessTokens.set(token, {

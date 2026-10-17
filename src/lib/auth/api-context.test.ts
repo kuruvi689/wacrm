@@ -5,10 +5,22 @@ import type { ApiKeyRow } from "@/lib/api-keys/store";
 import { ApiError } from "@/lib/api/v1/respond";
 import { __resetRateLimitForTests, RATE_LIMITS } from "@/lib/rate-limit";
 
-// Mock the service-role client factory — requireApiKey only stashes
-// the returned client in the context; tests never call through it.
+// Mock the service-role client factory. requireApiKey stashes the
+// client in the context and also reads the account's plan state
+// (accounts.status / trial_ends_at) through it for the SaaS gate.
+let planState: { status: string; trial_ends_at: string | null } | null = {
+  status: "active",
+  trial_ends_at: null,
+};
 vi.mock("@/lib/flows/admin-client", () => ({
-  supabaseAdmin: () => ({ __isMockAdminClient: true }),
+  supabaseAdmin: () => ({
+    __isMockAdminClient: true,
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: planState, error: null }) }),
+      }),
+    }),
+  }),
 }));
 
 // Mock the store so we control which row a hash resolves to.
@@ -44,6 +56,7 @@ function row(overrides: Partial<ApiKeyRow> = {}): ApiKeyRow {
 }
 
 beforeEach(() => {
+  planState = { status: "active", trial_ends_at: null };
   __resetRateLimitForTests();
   findActiveKeyByHash.mockReset();
   touchLastUsed.mockReset();
@@ -63,6 +76,19 @@ async function expectApiError(p: Promise<unknown>, code: string, status: number)
 }
 
 describe("requireApiKey", () => {
+  it("403s when the workspace is suspended", async () => {
+    findActiveKeyByHash.mockResolvedValue(row());
+    planState = { status: "suspended", trial_ends_at: null };
+    await expectApiError(requireApiKey(reqWith(`Bearer ${KEY}`)), "forbidden", 403);
+    expect(touchLastUsed).not.toHaveBeenCalled();
+  });
+
+  it("403s when the trial has expired", async () => {
+    findActiveKeyByHash.mockResolvedValue(row());
+    planState = { status: "trialing", trial_ends_at: "2020-01-01T00:00:00Z" };
+    await expectApiError(requireApiKey(reqWith(`Bearer ${KEY}`)), "forbidden", 403);
+  });
+
   it("401s when no Authorization header is present", async () => {
     await expectApiError(requireApiKey(reqWith()), "unauthorized", 401);
     expect(findActiveKeyByHash).not.toHaveBeenCalled();

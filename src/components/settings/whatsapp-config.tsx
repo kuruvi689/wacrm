@@ -36,6 +36,16 @@ const MASKED_TOKEN = '••••••••••••••••';
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
 
+/** The slice of Meta's JS SDK (`window.FB`) used by Embedded Signup. */
+interface FacebookSdkWindow extends Window {
+  FB?: {
+    login: (
+      callback: (response: { authResponse?: { code?: string } | null }) => void,
+      options: Record<string, unknown>,
+    ) => void;
+  };
+}
+
 export function WhatsAppConfig() {
   const t = useTranslations('Settings.whatsapp');
   const supabase = createClient();
@@ -196,9 +206,10 @@ export function WhatsAppConfig() {
       return;
     }
 
-    if (typeof window !== 'undefined' && (window as any).FB) {
-      (window as any).FB.login(
-        (response: any) => {
+    const fb = typeof window !== 'undefined' ? (window as FacebookSdkWindow).FB : undefined;
+    if (fb) {
+      fb.login(
+        (response) => {
           if (response.authResponse?.code) {
             toast.success('Meta Embedded Signup authorization received!');
           }

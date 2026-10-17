@@ -9,6 +9,45 @@ Versions follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0, `MINOR` bumps cover new modules; `PATCH` bumps cover bug fixes
 and polish.
 
+## [Unreleased]
+
+Multi-tenant SaaS operator layer, plus security fixes to the built-in
+MCP endpoint.
+
+> **Migration required:** apply `supabase/migrations/037_saas_tenancy.sql`.
+> Existing accounts are grandfathered (active, unlimited, onboarding
+> skipped). See [docs/saas.md](./docs/saas.md).
+
+### Added
+
+- **Operator console** at `/admin` (set `PLATFORM_ADMIN_EMAILS`): manage
+  every workspace's plan label, trial, member/contact caps; activate,
+  extend or suspend. Configurable defaults for new signups.
+- **Workspace onboarding** wizard for new owners (`/onboarding`).
+- **Suspended / expired-trial gate** across the dashboard, cookie-auth
+  API routes, public API keys and MCP.
+- **Seat and contact caps** enforced in Postgres (covers UI, CSV import,
+  API and MCP).
+
+### Fixed
+
+- **MCP `list_messages` leaked messages across tenants** (service-role
+  client, no account check). It now verifies conversation ownership.
+- MCP tools now enforce API-key scopes (a read-only key could send
+  WhatsApp messages), validate input, cap `limit`, and escape the search
+  filter; `tools/list` requires a key; the HTML landing page escapes the
+  request origin.
+- MCP `get_contact` / `create_contact` serialized contacts twice and
+  dropped their tags.
+- MCP no longer keeps an in-memory SSE session map (it could not work on
+  serverless); it answers over stateless POST (Streamable HTTP).
+- Tenant admins could edit their own `accounts` plan columns through
+  RLS; a trigger now restricts that to the operator.
+- Dashboard routes outside the middleware allow-list (`/flows`,
+  `/agents`, `/notifications`) now require sign-in at the layout.
+- Lint errors (`any` types) in the WhatsApp config panel and the
+  OAuth helper server.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same

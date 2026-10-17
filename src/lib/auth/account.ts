@@ -29,6 +29,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
+import { BLOCK_MESSAGES, evaluateAccess } from "@/lib/saas/access";
 import { hasMinRole, isAccountRole, type AccountRole } from "./roles";
 
 // ------------------------------------------------------------
@@ -149,7 +150,7 @@ export async function getCurrentAccount(): Promise<AccountContext> {
   // RLS, so it stays robust against cache staleness and older schemas.
   const { data: account, error: accountErr } = await supabase
     .from("accounts")
-    .select("id, name")
+    .select("id, name, status, trial_ends_at")
     .eq("id", data.account_id)
     .maybeSingle();
 
@@ -161,6 +162,17 @@ export async function getCurrentAccount(): Promise<AccountContext> {
     // account_id points at no readable account row — orphaned profile
     // or an RLS gap. Same "can't scope this user" outcome as above.
     throw new ForbiddenError("Profile is not linked to an account");
+  }
+
+  // SaaS gate: suspended workspaces and expired trials are read-blocked
+  // here so every cookie-authenticated API route enforces it, not just
+  // the UI. Rows from before migration 037 have no status → active.
+  const access = evaluateAccess({
+    status: account.status ?? "active",
+    trial_ends_at: account.trial_ends_at ?? null,
+  });
+  if (!access.allowed) {
+    throw new ForbiddenError(BLOCK_MESSAGES[access.reason]);
   }
 
   return {
