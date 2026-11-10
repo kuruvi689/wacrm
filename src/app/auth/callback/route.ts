@@ -9,15 +9,12 @@ import { NextResponse } from 'next/server'
 
 import { createClient } from '@/lib/supabase/server'
 import { safeNextPath } from '@/lib/auth/safe-next-path'
+import { signInErrorCode } from '@/lib/auth/sign-in-errors'
 
 export async function GET(request: Request) {
   const url = new URL(request.url)
   const code = url.searchParams.get('code')
   const next = safeNextPath(url.searchParams.get('next'))
-
-  // Provider-side failures (user cancelled, consent denied) arrive as
-  // ?error=…&error_description=… instead of a code.
-  const providerError = url.searchParams.get('error_description') || url.searchParams.get('error')
 
   if (code) {
     const supabase = await createClient()
@@ -28,7 +25,10 @@ export async function GET(request: Request) {
     console.error('[auth/callback] code exchange failed:', error.message)
   }
 
+  // Provider-side failures (user cancelled, consent denied) arrive as
+  // ?error=… instead of a code. Only a fixed code is passed on, never
+  // the provider's free text.
   const login = new URL('/login', url.origin)
-  login.searchParams.set('error', providerError || 'Sign-in failed. Please try again.')
+  login.searchParams.set('error', signInErrorCode(url.searchParams.get('error')))
   return NextResponse.redirect(login)
 }

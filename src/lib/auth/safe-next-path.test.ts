@@ -18,6 +18,10 @@ describe('safeNextPath', () => {
     '/\\evil.com',
     '\\\\evil.com',
     'javascript:alert(1)',
+    // Dot segments that normalize into a protocol-relative path.
+    '/.//evil.com',
+    '/x/..//evil.com',
+    '/%2e//evil.com',
   ])('falls back to /dashboard for %j', (value) => {
     expect(safeNextPath(value)).toBe('/dashboard')
   })

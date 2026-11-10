@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { MessageSquare, UsersRound } from "lucide-react";
 import { GoogleSignInButton, OrDivider } from "@/components/auth/google-sign-in-button";
+import { signInErrorMessage } from "@/lib/auth/sign-in-errors";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless it sits under a Suspense boundary. We split the form into
@@ -41,8 +42,11 @@ function LoginPageInner() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  // /auth/callback sends failed Google sign-ins back here with ?error=.
-  const [error, setError] = useState<string | null>(searchParams.get("error"));
+  // /auth/callback sends failed Google sign-ins back here with an
+  // ?error= code; only known codes are shown, as fixed text.
+  const [error, setError] = useState<string | null>(
+    signInErrorMessage(searchParams.get("error")),
+  );
   const [loading, setLoading] = useState(false);
   const supabase = createClient();
   const afterSignIn = inviteToken
