@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { MessageSquare, UsersRound, Building2 } from 'lucide-react'
+import { TeddyMark } from '@/components/brand/teddy-logo'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -74,6 +75,7 @@ export default function OnboardingPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-6 px-4 py-12">
       <header>
+        <TeddyMark size={48} priority className="mb-4" />
         <h1 className="text-2xl font-semibold tracking-tight">Welcome — let&apos;s set up your workspace</h1>
         <p className="mt-1 text-muted-foreground">
           Three quick steps. You can skip any of them and come back from Settings.
