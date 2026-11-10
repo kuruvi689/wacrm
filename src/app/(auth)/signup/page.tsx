@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { MessageSquare, CheckCircle, UsersRound } from "lucide-react";
+import { GoogleSignInButton, OrDivider } from "@/components/auth/google-sign-in-button";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -223,6 +224,15 @@ function SignupPageInner() {
               {loading ? "Creating account..." : "Create account"}
             </Button>
           </form>
+
+          <OrDivider />
+          {/* Google accounts are already email-verified, so this skips the
+              confirmation email and lands straight on the invite or dashboard. */}
+          <GoogleSignInButton
+            next={inviteToken ? `/join/${encodeURIComponent(inviteToken)}` : "/dashboard"}
+            label="Sign up with Google"
+            onError={setError}
+          />
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             Already have an account?{" "}
