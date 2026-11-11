@@ -21,6 +21,8 @@
     "notifications": "Notifications",
     "contacts": "Contacts",
     "pipelines": "Pipelines",
+
+    "products": "Products",
     "broadcasts": "Broadcasts",
     "automations": "Automations",
     "flows": "Flows",
@@ -46,6 +48,8 @@
     "notifications": "Notifications",
     "contacts": "Contacts",
     "pipelines": "Pipelines",
+
+    "products": "Products",
     "broadcasts": "Broadcasts",
     "automations": "Automations",
     "settings": "Settings",
