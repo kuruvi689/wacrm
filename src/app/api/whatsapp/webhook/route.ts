@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
@@ -9,6 +10,18 @@ import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
+import { decideInboundDedup } from '@/lib/whatsapp/inbound-dedup'
+import {
+  allowedPreviousStatuses,
+  extractStatusError,
+  type MetaStatusError,
+} from '@/lib/whatsapp/message-status'
+import { canRunAutomation } from '@/lib/whatsapp/automation-gate'
+import { getEntitlements, recordUsage } from '@/lib/billing/metering'
+import {
+  OPT_OUT_SOURCE_KEYWORD,
+  detectOptKeyword,
+} from '@/lib/whatsapp/opt-out'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -80,10 +93,21 @@ interface WhatsAppWebhookEntry {
         status: string
         timestamp: string
         recipient_id: string
+        /** Present on `failed` statuses (and some warnings). */
+        errors?: MetaStatusError[]
       }>
     }
     field: string
   }>
+}
+
+// Constant-time comparison against WHATSAPP_WEBHOOK_VERIFY_TOKEN (if set).
+function matchesPlatformVerifyToken(supplied: string): boolean {
+  const expected = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN
+  if (!expected) return false
+  const a = Buffer.from(supplied)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
 }
 
 // GET - Webhook verification
@@ -99,6 +123,16 @@ export async function GET(request: Request) {
         { error: 'Missing verification parameters' },
         { status: 400 }
       )
+    }
+
+    // Platform-wide token: with Embedded Signup there is ONE webhook per
+    // Meta app (not per customer), verified once in the Meta dashboard.
+    // Set WHATSAPP_WEBHOOK_VERIFY_TOKEN to the token you typed there.
+    if (matchesPlatformVerifyToken(verifyToken)) {
+      return new Response(challenge, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      })
     }
 
     // Fetch all whatsapp configs to check verify tokens
@@ -286,9 +320,23 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       const decryptedAccessToken = decrypt(config.access_token)
 
+      // Chargeable automation (flows / automations / AI auto-reply) only
+      // runs for usable workspaces; the message itself is always stored.
+      const automationsAllowed = await loadAutomationAllowed(config.account_id)
+
       for (let i = 0; i < value.messages.length; i++) {
         const message = value.messages[i]
         const contact = value.contacts[i] || value.contacts[0]
+
+        // Idempotency: Meta retries deliveries, which would otherwise
+        // re-insert the message and re-fire flows / automations / AI.
+        if (!(await claimInboundMessage(phoneNumberId, message.id, config.account_id))) {
+          continue
+        }
+        // Metered for the usage dashboard only; inbound is never blocked.
+        if (message.id) {
+          await recordUsage(config.account_id, 'messages', 1, `in:${message.id}`)
+        }
 
         await processMessage(
           message,
@@ -300,11 +348,82 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           // inserts that need it for NOT NULL FK compliance. Always
           // the admin who saved the WhatsApp config.
           config.user_id,
-          decryptedAccessToken
+          decryptedAccessToken,
+          automationsAllowed
         )
       }
     }
   }
+}
+
+/**
+ * Atomically claim an inbound wamid via `claim_inbound_message`. Returns
+ * false only for a confirmed duplicate. Fails OPEN on RPC errors (e.g. the
+ * migration is not applied yet): a duplicate beats a dropped customer
+ * message.
+ */
+async function claimInboundMessage(
+  phoneNumberId: string,
+  wamid: string | undefined,
+  accountId: string
+): Promise<boolean> {
+  let rpc: { data: unknown; error: unknown | null } | null = null
+  try {
+    rpc = await supabaseAdmin().rpc('claim_inbound_message', {
+      p_phone_number_id: phoneNumberId,
+      p_wamid: wamid,
+      p_account_id: accountId,
+    })
+  } catch (err) {
+    rpc = { data: null, error: err }
+  }
+  const decision = decideInboundDedup(wamid, rpc)
+  if (!decision.process) {
+    console.info('[webhook] duplicate inbound message skipped:', wamid)
+    return false
+  }
+  if (decision.reason === 'dedup_unavailable') {
+    console.warn(
+      '[webhook] inbound dedup unavailable, processing anyway:',
+      wamid,
+      rpc?.error instanceof Error ? rpc.error.message : (rpc?.error as { message?: string } | null)?.message
+    )
+  }
+  return true
+}
+
+/**
+ * Whether flows / automations / AI auto-reply may run for this account.
+ * Blocked for suspended or trial-expired workspaces. If the account row
+ * cannot be read we fail open (log + allow): dropping a live customer's
+ * automations on a transient DB error is worse than the cost of one run.
+ */
+async function loadAutomationAllowed(accountId: string): Promise<boolean> {
+  // Subscription entitlements (migration 040) decide first. Accounts
+  // with no subscription row get source 'legacy', which mirrors the
+  // accounts.status / trial check below.
+  const entitlements = await getEntitlements(accountId)
+  if (entitlements) {
+    if (!entitlements.chargeable) {
+      console.info('[webhook] automation skipped, subscription not chargeable:', accountId, entitlements.status)
+    }
+    return entitlements.chargeable
+  }
+
+  const { data, error } = await supabaseAdmin()
+    .from('accounts')
+    .select('status, trial_ends_at')
+    .eq('id', accountId)
+    .maybeSingle()
+  if (error || !data) {
+    console.warn('[webhook] could not load account status; allowing automation:', accountId, error?.message)
+    return true
+  }
+  const allowed = canRunAutomation(data)
+  if (!allowed) {
+    console.info('[webhook] automation skipped for blocked workspace:', accountId)
+  }
+  return allowed
 }
 
 // The happy-path status ladder — pending → sent → delivered → read →
@@ -354,19 +473,42 @@ async function handleStatusUpdate(status: {
   status: string
   timestamp: string
   recipient_id: string
+  errors?: MetaStatusError[]
 }) {
-  // 1) Mirror onto messages (legacy behavior) — Meta's status values
-  //    already match the CHECK constraint on messages.status. No
-  //    `.select()`: message_id is NOT unique (migration 009 — Meta ids
-  //    repeat across numbers), so this updates 0..N rows and must not
-  //    assume a single row.
-  const { error: msgErr } = await supabaseAdmin()
-    .from('messages')
-    .update({ status: status.status })
-    .eq('message_id', status.id)
+  // 1) Mirror onto messages. Forward-only (sent < delivered < read; failed
+  //    only before read) enforced atomically by filtering on the allowed
+  //    PREVIOUS statuses, so out-of-order / replayed callbacks can never
+  //    regress a row. Failed statuses also capture Meta's error code +
+  //    message. No `.select()`: message_id is NOT unique (migration 009 —
+  //    Meta ids repeat across numbers), so this updates 0..N rows.
+  const { errorCode, errorMessage } = extractStatusError(status.errors)
+  const previous = allowedPreviousStatuses(status.status)
+  if (previous.length > 0) {
+    const msgUpdate: Record<string, unknown> = { status: status.status }
+    if (status.status === 'failed') {
+      msgUpdate.error_code = errorCode
+      msgUpdate.error_message = errorMessage
+    }
+    let { error: msgErr } = await supabaseAdmin()
+      .from('messages')
+      .update(msgUpdate)
+      .eq('message_id', status.id)
+      .in('status', previous)
 
-  if (msgErr) {
-    console.error('Error updating message status:', msgErr)
+    // Migration 042 (error columns) not applied yet: keep the status
+    // update working rather than losing it.
+    if (msgErr && status.status === 'failed') {
+      console.warn('[webhook] message error columns unavailable, retrying status only:', msgErr.message)
+      ;({ error: msgErr } = await supabaseAdmin()
+        .from('messages')
+        .update({ status: status.status })
+        .eq('message_id', status.id)
+        .in('status', previous))
+    }
+
+    if (msgErr) {
+      console.error('Error updating message status:', msgErr)
+    }
   }
 
   // Webhook fan-out for this status change happens at the END of this
@@ -397,6 +539,9 @@ async function handleStatusUpdate(status: {
     if (status.status === 'sent' && !('sent_at' in update)) update.sent_at = tsIso
     if (status.status === 'delivered') update.delivered_at = tsIso
     if (status.status === 'read') update.read_at = tsIso
+    if (status.status === 'failed' && (errorMessage || errorCode !== null)) {
+      update.error_message = errorMessage ?? `Meta error ${errorCode}`
+    }
 
     const { error: recUpdateErr } = await supabaseAdmin()
       .from('broadcast_recipients')
@@ -568,7 +713,10 @@ async function processMessage(
   // (contacts, conversations). Always the admin who saved the
   // WhatsApp config; the choice is arbitrary post-017 but stable.
   configOwnerUserId: string,
-  accessToken: string
+  accessToken: string,
+  // False for suspended / trial-expired workspaces: the message is still
+  // stored but flows, automations and AI auto-reply are skipped.
+  automationsAllowed: boolean = true
 ) {
   const senderPhone = normalizePhone(message.from)
   const contactName = contact.profile.name
@@ -707,6 +855,16 @@ async function processMessage(
   // trigger installed in migration 003).
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
 
+  // STOP / UNSUBSCRIBE (START / SUBSCRIBE) opt-out keywords. The message is
+  // already stored above; here we flip the contact's consent flag. A STOP
+  // is not answered by flows / automations / AI (see runAutomation below).
+  const optKeyword =
+    message.type === 'text' ? detectOptKeyword(message.text?.body) : null
+  if (optKeyword) {
+    await applyOptKeyword(accountId, contactRecord.id, optKeyword)
+  }
+  const runAutomation = automationsAllowed && optKeyword !== 'opt_out'
+
   // ============================================================
   // Flow runner dispatch.
   //
@@ -726,7 +884,9 @@ async function processMessage(
   // no active flows take the runner's early-exit "no_match" path
   // basically for free (one indexed SELECT for the active run).
   // ============================================================
-  const flowResult = await dispatchInboundToFlows({
+  const flowResult = !runAutomation
+    ? { consumed: false }
+    : await dispatchInboundToFlows({
     accountId,
     userId: configOwnerUserId,
     contactId: contactRecord.id,
@@ -789,7 +949,7 @@ async function processMessage(
   // logging zero steps. `runAutomationsForTrigger` owns its own try/catch
   // and never throws; the `.catch` is belt-and-braces so one trigger
   // type's failure can't skip the rest of the loop.
-  for (const triggerType of automationTriggers) {
+  for (const triggerType of runAutomation ? automationTriggers : []) {
     await runAutomationsForTrigger({
       accountId,
       triggerType,
@@ -809,12 +969,15 @@ async function processMessage(
   // the account has enabled it. Awaited inside `after()` (same reason as
   // the webhook dispatch below); `dispatchInboundToAiReply` owns its
   // eligibility gates + try/catch and never throws.
-  if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
+  if (runAutomation && !flowConsumed && !interactiveReplyId && inboundText.trim()) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,
       contactId: contactRecord.id,
       configOwnerUserId,
+      // Stable per inbound message: the metering idempotency key, so a
+      // Meta redelivery can never be charged or answered twice.
+      inboundWamid: message.id,
     })
   }
 
@@ -832,6 +995,30 @@ async function processMessage(
     content_type: contentType,
     text: contentText,
   })
+}
+
+/**
+ * Apply a STOP/START keyword to the contact. Best-effort: if migration 042
+ * (contacts.opted_out_at) is not applied the update errors; log and move on
+ * so the webhook never fails because of consent bookkeeping.
+ */
+async function applyOptKeyword(
+  accountId: string,
+  contactId: string,
+  keyword: 'opt_out' | 'opt_in'
+) {
+  const update =
+    keyword === 'opt_out'
+      ? { opted_out_at: new Date().toISOString(), opt_out_source: OPT_OUT_SOURCE_KEYWORD }
+      : { opted_out_at: null, opt_out_source: null }
+  const { error } = await supabaseAdmin()
+    .from('contacts')
+    .update(update)
+    .eq('id', contactId)
+    .eq('account_id', accountId)
+  if (error) {
+    console.warn('[webhook] could not record opt-in/out keyword:', keyword, error.message)
+  }
 }
 
 async function parseMessageContent(

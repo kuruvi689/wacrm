@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { addContactTag, deleteContactTag } from '@/lib/contacts/tag-api';
 import { toast } from 'sonner';
+import { parsePlanLimitError, planLimitMessage } from '@/lib/saas/plan-limit-error';
 import type { Contact, Tag, ContactTag } from '@/types';
 import {
   findExistingContact,
@@ -211,6 +212,11 @@ export function ContactForm({
           );
           if (existing) setDupMatch({ contact: existing, exact: true });
         }
+        return;
+      }
+      const planLimit = parsePlanLimitError(err);
+      if (planLimit) {
+        toast.error(planLimitMessage(planLimit));
         return;
       }
       const message = err instanceof Error ? err.message : t('toastError');

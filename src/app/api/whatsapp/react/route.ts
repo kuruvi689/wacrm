@@ -1,10 +1,12 @@
+import { workspaceBlockResponse } from '@/lib/saas/route-gate';
+import { roleBlockResponse } from '@/lib/whatsapp/role-gate';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sendReactionMessage } from '@/lib/whatsapp/meta-api';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils';
 import {
-  checkRateLimit,
+  checkRateLimitShared,
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit';
@@ -31,7 +33,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const limit = checkRateLimit(`react:${user.id}`, RATE_LIMITS.react);
+    const blocked = await workspaceBlockResponse(supabase, user.id);
+    if (blocked) return blocked;
+
+    // Role gate (before any Meta call): agent+ only.
+    const roleBlocked = await roleBlockResponse(supabase, user.id, 'agent');
+    if (roleBlocked) return roleBlocked;
+
+    const limit = await checkRateLimitShared(`react:${user.id}`, RATE_LIMITS.react);
     if (!limit.success) {
       return rateLimitResponse(limit);
     }

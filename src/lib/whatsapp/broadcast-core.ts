@@ -29,6 +29,7 @@ import {
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
+import { OPT_OUT_REASON, loadOptedOutContactIds } from '@/lib/whatsapp/opt-out';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -72,6 +73,8 @@ export interface BroadcastPlan {
   planned: PlannedRecipient[];
   /** Phones rejected up front (invalid E.164) — counted as failed. */
   rejected: number;
+  /** Contacts skipped because they opted out (recorded as failed, reason 'opted_out'). */
+  optedOut: number;
 }
 
 const MAX_RECIPIENTS = 1000;
@@ -185,6 +188,15 @@ export async function createBroadcast(
     );
   }
 
+  // Skip contacts who opted out (STOP). They still get a recipient row —
+  // status 'failed' with error_message 'opted_out' — so the broadcast's
+  // counts and per-recipient report show why nothing was sent.
+  const optedOutIds = await loadOptedOutContactIds(
+    db,
+    accountId,
+    deduped.map((r) => r.contactId)
+  );
+
   // Persist the broadcast + its recipients. The count columns
   // (sent/delivered/read/replied/failed) are owned by the DB aggregate
   // trigger (migrations 003/005) and derived purely from
@@ -214,13 +226,22 @@ export async function createBroadcast(
   const { data: recipientRows, error: rErr } = await db
     .from('broadcast_recipients')
     .insert(
-      deduped.map((r) => ({
-        broadcast_id: broadcast.id,
-        contact_id: r.contactId,
-        status: 'pending' as const,
-      }))
+      deduped.map((r) =>
+        optedOutIds.has(r.contactId)
+          ? {
+              broadcast_id: broadcast.id,
+              contact_id: r.contactId,
+              status: 'failed' as const,
+              error_message: OPT_OUT_REASON,
+            }
+          : {
+              broadcast_id: broadcast.id,
+              contact_id: r.contactId,
+              status: 'pending' as const,
+            }
+      )
     )
-    .select('id, contact_id');
+    .select('id, contact_id, status');
   if (rErr || !recipientRows) {
     console.error('[broadcast-core] create recipients error:', rErr);
     throw new BroadcastError('internal', 'Failed to create broadcast', 500);
@@ -229,10 +250,12 @@ export async function createBroadcast(
   // Pair each inserted recipient row back to its phone/params by
   // contact_id — unambiguous now that duplicates are collapsed.
   const byContact = new Map(deduped.map((r) => [r.contactId, r]));
-  const planned: PlannedRecipient[] = recipientRows.map((row) => {
-    const r = byContact.get(row.contact_id as string)!;
-    return { recipientRowId: row.id as string, phone: r.phone, params: r.params };
-  });
+  const planned: PlannedRecipient[] = recipientRows
+    .filter((row) => !optedOutIds.has(row.contact_id as string))
+    .map((row) => {
+      const r = byContact.get(row.contact_id as string)!;
+      return { recipientRowId: row.id as string, phone: r.phone, params: r.params };
+    });
 
   return {
     broadcastId: broadcast.id,
@@ -243,6 +266,7 @@ export async function createBroadcast(
     templateRow,
     planned,
     rejected,
+    optedOut: optedOutIds.size,
   };
 }
 

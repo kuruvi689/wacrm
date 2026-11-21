@@ -1,3 +1,10 @@
+import { workspaceBlockResponse } from '@/lib/saas/route-gate'
+import { roleBlockResponse } from '@/lib/whatsapp/role-gate'
+import {
+  OPT_OUT_REASON,
+  isPhoneOptedOut,
+  loadOptedOutPhoneDigits,
+} from '@/lib/whatsapp/opt-out'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
@@ -11,7 +18,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import {
-  checkRateLimit,
+  checkRateLimitShared,
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit'
@@ -71,10 +78,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const blocked = await workspaceBlockResponse(supabase, user.id)
+    if (blocked) return blocked
+
+    // Broadcasts message many customers: admin+ only, checked before any
+    // Meta call.
+    const roleBlocked = await roleBlockResponse(supabase, user.id, 'admin')
+    if (roleBlocked) return roleBlocked
+
     // Per-user broadcast budget. Note: this limits how often a user
     // can *start* a campaign, not how many messages go out inside
     // one — the fan-out loop below runs without additional gating.
-    const limit = checkRateLimit(`broadcast:${user.id}`, RATE_LIMITS.broadcast)
+    const limit = await checkRateLimitShared(`broadcast:${user.id}`, RATE_LIMITS.broadcast)
     if (!limit.success) {
       return rateLimitResponse(limit)
     }
@@ -175,12 +190,26 @@ export async function POST(request: Request) {
     }
     const templateRow = rawTemplateRow ?? null
 
+    // Opted-out contacts (STOP) are skipped and reported as failed with
+    // reason 'opted_out'. Matched by digit-normalised phone.
+    const optedOutDigits = await loadOptedOutPhoneDigits(supabase, accountId)
+
     const results: BroadcastResult[] = []
     let sentCount = 0
     let failedCount = 0
 
     for (const recipient of recipients) {
       const sanitized = sanitizePhoneForMeta(recipient.phone)
+
+      if (isPhoneOptedOut(sanitized, optedOutDigits)) {
+        results.push({
+          phone: recipient.phone,
+          status: 'failed',
+          error: OPT_OUT_REASON,
+        })
+        failedCount++
+        continue
+      }
 
       if (!isValidE164(sanitized)) {
         results.push({

@@ -646,3 +646,73 @@ export interface QuickReply {
   created_at: string;
   updated_at: string;
 }
+
+// ============================================================
+// Catalog + orders (migration 039). Money is integer minor units.
+// ============================================================
+
+export interface Product {
+  id: string;
+  account_id: string;
+  created_by: string | null;
+  name: string;
+  sku: string | null;
+  description: string | null;
+  price_minor: number;
+  /** ISO-4217 code. */
+  currency: string;
+  /** Percentage, e.g. 18 for 18%. Prices are tax-exclusive. */
+  tax_rate: number;
+  /** Highest discount (%) the AI may offer without a human. */
+  max_discount_pct: number;
+  is_active: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export type OrderStatus =
+  | 'draft'
+  | 'awaiting_payment'
+  | 'paid'
+  | 'expired'
+  | 'cancelled'
+  | 'refunded'
+  | 'cod_confirmed';
+
+export interface OrderItem {
+  id: string;
+  order_id: string;
+  product_id: string | null;
+  name_snapshot: string;
+  sku_snapshot: string | null;
+  unit_price_minor: number;
+  tax_rate: number;
+  qty: number;
+  discount_minor: number;
+  tax_minor: number;
+  line_total_minor: number;
+}
+
+export interface Order {
+  id: string;
+  account_id: string;
+  contact_id: string | null;
+  conversation_id: string | null;
+  deal_id: string | null;
+  status: OrderStatus;
+  currency: string;
+  subtotal_minor: number;
+  discount_minor: number;
+  tax_minor: number;
+  total_minor: number;
+  discount_pct: number;
+  created_via: 'agent' | 'ai' | 'api';
+  created_by: string | null;
+  notes: string | null;
+  paid_at: string | null;
+  created_at: string;
+  updated_at: string;
+  order_items?: OrderItem[];
+  contact?: Pick<Contact, 'id' | 'name' | 'phone'> | null;
+}

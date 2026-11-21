@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
-import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
-import { loadAiConfig } from '@/lib/ai/config'
+import { checkRateLimitShared, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { loadRuntimeAi, providerMismatch } from '@/lib/ai/agents'
+import { buildToolRuntime } from '@/lib/ai/tool-runtime'
+import { logAiUsage } from '@/lib/ai/usage'
+import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { retrieveKnowledge } from '@/lib/ai/knowledge'
 import { generateReply } from '@/lib/ai/generate'
 import { buildSystemPrompt } from '@/lib/ai/defaults'
@@ -25,7 +28,7 @@ export async function POST(request: Request) {
   try {
     const { supabase, accountId, userId } = await requireRole('agent')
 
-    const limit = checkRateLimit(`ai-playground:${userId}`, RATE_LIMITS.aiDraft)
+    const limit = await checkRateLimitShared(`ai-playground:${userId}`, RATE_LIMITS.aiDraft)
     if (!limit.success) return rateLimitResponse(limit)
 
     const body = await request.json().catch(() => null)
@@ -53,15 +56,17 @@ export async function POST(request: Request) {
       )
     }
 
-    const config = await loadAiConfig(supabase, accountId, {
+    const runtime = await loadRuntimeAi(supabase, accountId, {
+      surface: 'draft',
       requireActive: false,
     }).catch((err) => {
-      console.error('[ai/playground] loadAiConfig error:', err)
+      console.error('[ai/playground] loadRuntimeAi error:', err)
       throw new AiError('Stored API key could not be decrypted.', {
         code: 'key_decrypt_failed',
         status: 400,
       })
     })
+    const config = runtime?.config
     if (!config) {
       return NextResponse.json(
         {
@@ -72,20 +77,70 @@ export async function POST(request: Request) {
       )
     }
 
+    if (runtime && providerMismatch(runtime)) {
+      return NextResponse.json(
+        { error: "The agent's model doesn't match the saved API key. Fix it in Agents.", code: 'provider_key_mismatch' },
+        { status: 422 },
+      )
+    }
+
     const knowledge = await retrieveKnowledge(
       supabase,
       accountId,
       config,
       latestUserMessage(messages),
     )
+    const agent = runtime?.agent ?? null
+    // Tools run in dry-run: nothing is written and no webhook is called.
+    const tools = await buildToolRuntime(supabaseAdmin(), agent, {
+      accountId,
+      conversationId: null,
+      contactId: null,
+      embeddingsApiKey: config.embeddingsApiKey,
+      source: 'playground',
+      dryRun: true,
+    })
     const systemPrompt = buildSystemPrompt({
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
+      businessKnowledge: agent?.businessKnowledge,
+      constraints: agent?.responseConstraints,
+      toolsEnabled: !!tools,
     })
 
-    const { text, handoff } = await generateReply({ config, systemPrompt, messages })
-    return NextResponse.json({ reply: text, handoff })
+    const started = Date.now()
+    const admin = supabaseAdmin()
+    const logBase = {
+      accountId,
+      conversationId: null,
+      mode: 'draft' as const,
+      provider: config.provider,
+      model: config.model,
+      agentId: agent?.agentId ?? null,
+      agentVersionId: agent?.versionId ?? null,
+      source: 'playground' as const,
+    }
+    try {
+      const { text, handoff, usage, toolCalls } = await generateReply({
+        config,
+        systemPrompt,
+        messages,
+        tools,
+      })
+      await logAiUsage(admin, { ...logBase, usage, latencyMs: Date.now() - started, handoff })
+      return NextResponse.json({ reply: text, handoff, tool_calls: toolCalls })
+    } catch (err) {
+      const code = err instanceof AiError ? err.code : 'unknown_error'
+      await logAiUsage(admin, {
+        ...logBase,
+        usage: null,
+        latencyMs: Date.now() - started,
+        status: code === 'timeout' ? 'timeout' : 'error',
+        errorCode: code,
+      })
+      throw err
+    }
   } catch (err) {
     if (err instanceof AiError) {
       return NextResponse.json(

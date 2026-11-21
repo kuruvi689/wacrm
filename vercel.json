@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/automations/cron",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/flows/cron",
+      "schedule": "15 3 * * *"
+    },
+    {
+      "path": "/api/billing/cron",
+      "schedule": "30 3 * * *"
+    }
+  ]
+}

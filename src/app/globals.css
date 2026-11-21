@@ -145,6 +145,101 @@ html[data-mode="light"] {
   --sidebar-border: oklch(0.922 0.004 260);
 }
 
+/* ---- TEDDY³: brand theme ----
+ * The one accent that also restyles the neutral surfaces, so its
+ * mode blocks are scoped to [data-theme="teddy"] and outrank the
+ * generic MODE blocks above (higher specificity). Other accents keep
+ * the cool neutrals untouched.
+ *
+ * Brand board: cream #E7D7BF, mint #CDE7E5, tan #D9B18A, brown
+ * #8C6E4D, near-black #111111. Text/button browns are one step darker
+ * than the board's (#7A5A33 / #6A4D2B) so they clear WCAG 4.5:1 on
+ * cream; dark mode flips the accent to tan with near-black text.
+ * Contrast (checked): body text 16.2:1, muted 5.2:1, brown on cream
+ * 5.6:1, cream on brown button 6.2:1; dark: tan on bg 9.5:1. */
+
+html[data-theme="teddy"][data-mode="light"] {
+  --background: oklch(0.959 0.014 84.6);          /* #F6F1E7 paper */
+  --foreground: oklch(0.196 0.012 91.8);          /* #17150F ink */
+  --card: oklch(0.994 0.007 88.6);                /* #FFFDF8 */
+  --card-2: oklch(0.974 0.011 84.6);              /* #FAF6EE */
+  --card-foreground: oklch(0.196 0.012 91.8);
+  --popover: oklch(0.994 0.007 88.6);
+  --popover-foreground: oklch(0.196 0.012 91.8);
+  --secondary: oklch(0.926 0.023 87.2);           /* #EDE6D6 */
+  --secondary-foreground: oklch(0.196 0.012 91.8);
+  --muted: oklch(0.926 0.023 87.2);
+  --muted-foreground: oklch(0.505 0.026 87.2);    /* #6B6454 */
+  --accent: oklch(0.926 0.023 87.2);
+  --accent-foreground: oklch(0.196 0.012 91.8);
+  --border: oklch(0.870 0.029 84.6);              /* #DDD3BF */
+  --input: oklch(0.870 0.029 84.6);
+  --chart-2: oklch(0.434 0.063 184.6);            /* mint ink */
+  --chart-3: oklch(0.787 0.070 65.8);             /* tan */
+  --chart-4: oklch(0.794 0.061 186.7);            /* mint */
+  --chart-5: oklch(0.690 0.072 70.5);             /* light brown */
+  --radius: 0.75rem;
+  --sidebar: oklch(0.930 0.022 83.3);             /* #EFE7D8 */
+  --sidebar-foreground: oklch(0.196 0.012 91.8);
+  --sidebar-accent: oklch(0.870 0.029 84.6);
+  --sidebar-accent-foreground: oklch(0.196 0.012 91.8);
+  --sidebar-border: oklch(0.870 0.029 84.6);
+}
+
+html[data-theme="teddy"][data-mode="dark"] {
+  --background: oklch(0.178 0.006 91.7);          /* #12110E */
+  --foreground: oklch(0.959 0.014 84.6);          /* cream */
+  --card: oklch(0.215 0.009 75.1);                /* #1C1915 */
+  --card-2: oklch(0.241 0.010 80.6);
+  --card-foreground: oklch(0.959 0.014 84.6);
+  --popover: oklch(0.215 0.009 75.1);
+  --popover-foreground: oklch(0.959 0.014 84.6);
+  --secondary: oklch(0.271 0.014 81.7);
+  --secondary-foreground: oklch(0.959 0.014 84.6);
+  --muted: oklch(0.271 0.014 81.7);
+  --muted-foreground: oklch(0.702 0.028 84.6);    /* #A79E8C */
+  --accent: oklch(0.271 0.014 81.7);
+  --accent-foreground: oklch(0.959 0.014 84.6);
+  --border: oklch(0.313 0.018 78.0);
+  --input: oklch(0.313 0.018 78.0);
+  --chart-2: oklch(0.794 0.061 186.7);
+  --chart-3: oklch(0.690 0.072 70.5);
+  --chart-4: oklch(0.908 0.028 185.5);
+  --chart-5: oklch(0.443 0.063 69.4);
+  --radius: 0.75rem;
+  --sidebar: oklch(0.192 0.007 78.2);
+  --sidebar-foreground: oklch(0.959 0.014 84.6);
+  --sidebar-accent: oklch(0.271 0.014 81.7);
+  --sidebar-accent-foreground: oklch(0.959 0.014 84.6);
+  --sidebar-border: oklch(0.313 0.018 78.0);
+}
+
+html[data-theme="teddy"] {
+  --primary: oklch(0.492 0.069 70.5);             /* #7A5A33 teddy brown */
+  --primary-foreground: oklch(0.994 0.007 88.6);
+  --primary-hover: oklch(0.443 0.063 69.4);       /* #6A4D2B, darker = more contrast */
+  --primary-soft: oklch(0.492 0.069 70.5 / 0.12);
+  --primary-soft-2: oklch(0.492 0.069 70.5 / 0.2);
+  --ring: oklch(0.492 0.069 70.5);
+  --chart-1: oklch(0.492 0.069 70.5);
+  --sidebar-primary: oklch(0.492 0.069 70.5);
+  --sidebar-primary-foreground: oklch(0.994 0.007 88.6);
+  --sidebar-ring: oklch(0.492 0.069 70.5);
+}
+
+html[data-theme="teddy"][data-mode="dark"] {
+  --primary: oklch(0.787 0.070 65.8);             /* #D9B18A tan */
+  --primary-foreground: oklch(0.178 0.006 91.7);
+  --primary-hover: oklch(0.835 0.061 67.7);       /* #E4C29F */
+  --primary-soft: oklch(0.787 0.070 65.8 / 0.12);
+  --primary-soft-2: oklch(0.787 0.070 65.8 / 0.22);
+  --ring: oklch(0.787 0.070 65.8);
+  --chart-1: oklch(0.787 0.070 65.8);
+  --sidebar-primary: oklch(0.787 0.070 65.8);
+  --sidebar-primary-foreground: oklch(0.178 0.006 91.7);
+  --sidebar-ring: oklch(0.787 0.070 65.8);
+}
+
 /* ---- ACCENT: primary color ---- */
 
 :root,
@@ -226,5 +321,9 @@ html[data-theme="rose"] {
   }
   html {
     @apply font-sans;
+  }
+  html[data-theme="teddy"] ::selection {
+    background: oklch(0.787 0.070 65.8);
+    color: oklch(0.196 0.012 91.8);
   }
 }

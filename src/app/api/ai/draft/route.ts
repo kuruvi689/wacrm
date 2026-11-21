@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
-import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
-import { loadAiConfig } from '@/lib/ai/config'
+import { checkRateLimitShared, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { loadRuntimeAi, providerMismatch } from '@/lib/ai/agents'
 import { buildConversationContext } from '@/lib/ai/context'
 import { retrieveKnowledge } from '@/lib/ai/knowledge'
 import { generateReply } from '@/lib/ai/generate'
@@ -24,10 +24,10 @@ export async function POST(request: Request) {
   try {
     const { supabase, accountId, userId } = await requireRole('agent')
 
-    const userLimit = checkRateLimit(`ai-draft:${userId}`, RATE_LIMITS.aiDraft)
+    const userLimit = await checkRateLimitShared(`ai-draft:${userId}`, RATE_LIMITS.aiDraft)
     if (!userLimit.success) return rateLimitResponse(userLimit)
     // Also cap the whole team's draws on the shared BYO provider key.
-    const accountLimit = checkRateLimit(
+    const accountLimit = await checkRateLimitShared(
       `ai-draft-acct:${accountId}`,
       RATE_LIMITS.aiDraftAccount,
     )
@@ -58,14 +58,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
     }
 
-    const config = await loadAiConfig(supabase, accountId).catch((err) => {
+    const runtime = await loadRuntimeAi(supabase, accountId, { surface: 'draft' }).catch((err) => {
       // Decrypt failure — surface distinctly from "not configured".
-      console.error('[ai/draft] loadAiConfig error:', err)
+      console.error('[ai/draft] loadRuntimeAi error:', err)
       throw new AiError('Stored API key could not be decrypted.', {
         code: 'key_decrypt_failed',
         status: 400,
       })
     })
+    const config = runtime?.config
     if (!config) {
       return NextResponse.json(
         {
@@ -76,7 +77,14 @@ export async function POST(request: Request) {
       )
     }
 
-    const messages = await buildConversationContext(supabase, conversationId)
+    if (runtime && providerMismatch(runtime)) {
+      return NextResponse.json(
+        { error: "The active agent's model doesn't match the saved API key. Fix it in Agents.", code: 'provider_key_mismatch' },
+        { status: 422 },
+      )
+    }
+
+    const messages = await buildConversationContext(supabase, conversationId, config.contextMessageLimit)
     // Nothing to draft from — a brand-new thread with no customer text
     // would otherwise produce a nonsensical reply-to-nothing.
     if (messages.length === 0) {
@@ -102,29 +110,42 @@ export async function POST(request: Request) {
       userPrompt: config.systemPrompt,
       mode: 'draft',
       knowledge,
+      businessKnowledge: runtime?.agent?.businessKnowledge,
+      constraints: runtime?.agent?.responseConstraints,
     })
 
-    const { text, usage } = await generateReply({ config, systemPrompt, messages })
-
-    // Record spend on the account's BYO key. Best-effort + via the
-    // service role (the log has no `authenticated` INSERT policy). This
-    // must not fail or delay the draft the agent is waiting on, so:
-    //  - the whole thing is wrapped (constructing the admin client throws
-    //    if the service-role key is unset — that must not 500 the draft);
-    //  - it's fire-and-forget (`void`), not awaited, so the response
-    //    isn't held for a DB round-trip.
-    try {
-      void logAiUsage(supabaseAdmin(), {
-        accountId,
-        conversationId,
-        mode: 'draft',
-        provider: config.provider,
-        model: config.model,
-        usage,
-      })
-    } catch (logErr) {
-      console.error('[ai/draft] usage log skipped:', logErr)
+    const started = Date.now()
+    const admin = supabaseAdmin()
+    const agent = runtime?.agent ?? null
+    const logBase = {
+      accountId,
+      conversationId,
+      mode: 'draft' as const,
+      provider: config.provider,
+      model: config.model,
+      agentId: agent?.agentId ?? null,
+      agentVersionId: agent?.versionId ?? null,
+      source: 'draft' as const,
     }
+    let generated
+    try {
+      generated = await generateReply({ config, systemPrompt, messages })
+    } catch (err) {
+      const code = err instanceof AiError ? err.code : 'unknown_error'
+      await logAiUsage(admin, {
+        ...logBase,
+        usage: null,
+        latencyMs: Date.now() - started,
+        status: code === 'timeout' ? 'timeout' : 'error',
+        errorCode: code,
+      })
+      throw err
+    }
+    const { text, usage } = generated
+
+    // Awaited: serverless runtimes can cut off a floating promise.
+    // `logAiUsage` never throws.
+    await logAiUsage(admin, { ...logBase, usage, latencyMs: Date.now() - started })
 
     return NextResponse.json({ draft: text })
   } catch (err) {

@@ -44,6 +44,12 @@ import {
 } from '@/lib/whatsapp/phone-utils';
 import type { MessageTemplate } from '@/types';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
+import {
+  WINDOW_CLOSED_CODE,
+  WINDOW_CLOSED_MESSAGE,
+  isServiceWindowOpen,
+  loadLastInboundAt,
+} from '@/lib/whatsapp/service-window';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -247,6 +253,16 @@ export async function sendMessageToConversation(
     );
   }
 
+  // 24-hour customer service window: free-form sends (everything except
+  // templates) are only allowed while the customer's latest inbound message
+  // is < 24h old. Refuse here, before any Meta call, with a clear error.
+  if (messageType !== 'template') {
+    const lastInboundAt = await loadLastInboundAt(db, conversationId);
+    if (!isServiceWindowOpen(lastInboundAt)) {
+      throw new SendMessageError(WINDOW_CLOSED_CODE, WINDOW_CLOSED_MESSAGE, 422);
+    }
+  }
+
   // WhatsApp config, account-scoped.
   const { data: config, error: configError } = await db
     .from('whatsapp_config')
@@ -426,6 +442,11 @@ export async function sendMessageToConversation(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : 'Unknown Meta API error';
+    // Meta 131047 = re-engagement required: the window closed between our
+    // check and Meta's (clock skew / race). Same remedy as our own check.
+    if ((err as { code?: unknown } | null)?.code === 131047) {
+      throw new SendMessageError(WINDOW_CLOSED_CODE, WINDOW_CLOSED_MESSAGE, 422);
+    }
     console.error('[send-message] Meta send failed for all variants:', message);
     throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
   }

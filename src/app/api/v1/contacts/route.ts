@@ -24,6 +24,7 @@ import {
   resolveAuditUserId,
   ContactError,
 } from '@/lib/api/v1/contacts';
+import { PLAN_LIMIT_STATUS } from '@/lib/saas/plan-limit-error';
 
 // PostgREST filter values are comma/paren-delimited; strip anything
 // that could break the `.or()` grammar before interpolating a search
@@ -138,11 +139,13 @@ export async function POST(request: Request) {
     return ok(contact, created ? 201 : 200);
   } catch (err) {
     if (err instanceof ContactError) {
-      return fail(
-        err.status === 400 ? 'bad_request' : 'internal',
-        err.message,
-        err.status
-      );
+      const code =
+        err.status === 400
+          ? 'bad_request'
+          : err.status === PLAN_LIMIT_STATUS
+            ? 'plan_limit'
+            : 'internal';
+      return fail(code, err.message, err.status);
     }
     return toApiErrorResponse(err);
   }

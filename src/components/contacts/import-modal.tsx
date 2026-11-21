@@ -19,6 +19,8 @@ import {
 } from '@/lib/contacts/resolve-import-tags';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { parsePlanLimitError, planLimitMessage } from '@/lib/saas/plan-limit-error';
+import type { PlanLimitInfo } from '@/lib/saas/plan-limit-error';
 import {
   Dialog,
   DialogContent,
@@ -268,6 +270,9 @@ export function ImportModal({
       //    unique index is the backstop: a 23505 (race, or a format
       //    that normalizes equal) counts as skipped, not failed.
       const chunkSize = 50;
+      // Set once the plan's contact cap refuses a row: every later insert
+      // would be refused too, so stop and tell the user why.
+      let planLimit: PlanLimitInfo | null = null;
 
       for (let i = 0; i < toInsert.length; i += chunkSize) {
         const chunk = toInsert.slice(i, i + chunkSize);
@@ -279,6 +284,11 @@ export function ImportModal({
           email: row.email || null,
           company: row.company || null,
         }));
+
+        if (planLimit) {
+          failed += rows.length;
+          continue;
+        }
 
         const { data, error } = await supabase
           .from('contacts')
@@ -308,6 +318,7 @@ export function ImportModal({
             } else if (isUniqueViolation(singleErr)) {
               skipped++;
             } else {
+              planLimit = planLimit ?? parsePlanLimitError(singleErr);
               failed++;
             }
           }
@@ -357,6 +368,9 @@ export function ImportModal({
       }
       if (skipped > 0) {
         toast.info(t('toastSkipped', { count: skipped }));
+      }
+      if (planLimit) {
+        toast.error(planLimitMessage(planLimit));
       }
       if (failed > 0) {
         toast.error(t('toastFailed', { count: failed }));

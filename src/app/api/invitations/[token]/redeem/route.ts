@@ -11,6 +11,8 @@
 //   - SQLSTATE 22023 → 400 (invitation not_found / used / expired)
 //   - SQLSTATE 23505 → 409 (caller's account already has data /
 //     they're already in this or another shared account)
+//   - SQLSTATE P0001 `plan_limit: members` → 402 (the inviter's plan
+//     has no free seat; raised by the migration-037 member trigger)
 //
 // Rate limit (per IP) is the same shape as peek but tighter —
 // a successful redeem changes data, and the RPC's data-loss
@@ -22,21 +24,17 @@ import type { PostgrestError } from "@supabase/supabase-js";
 
 import { hashInviteToken } from "@/lib/auth/invitations";
 import {
-  checkRateLimit,
+  checkRateLimitShared,
   rateLimitResponse,
   RATE_LIMITS,
 } from "@/lib/rate-limit";
+import { clientIp } from "@/lib/request-ip";
+import { parsePlanLimitError, planLimitResponse } from "@/lib/saas/plan-limit-error";
 import { createClient } from "@/lib/supabase/server";
 
-function getClientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  const xri = request.headers.get("x-real-ip");
-  if (xri) return xri.trim();
-  return "unknown";
-}
-
-function rpcErrorToResponse(err: PostgrestError): NextResponse {
+function rpcErrorToResponse(err: PostgrestError): Response {
+  const planLimit = parsePlanLimitError(err);
+  if (planLimit) return planLimitResponse(planLimit);
   if (err.code === "42501") {
     return NextResponse.json({ error: err.message }, { status: 401 });
   }
@@ -57,8 +55,8 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ token: string }> },
 ) {
-  const ip = getClientIp(request);
-  const limit = checkRateLimit(`redeem:${ip}`, RATE_LIMITS.invitationRedeem);
+  const ip = clientIp(request);
+  const limit = await checkRateLimitShared(`redeem:${ip}`, RATE_LIMITS.invitationRedeem);
   if (!limit.success) return rateLimitResponse(limit);
 
   const { token } = await params;

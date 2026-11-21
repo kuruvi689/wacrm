@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { MessageSquare, CheckCircle, ArrowLeft } from "lucide-react";
+import { CheckCircle, ArrowLeft } from "lucide-react";
+import { TeddyMark } from "@/components/brand/teddy-logo";
+
+function ExpiredLinkNotice() {
+  if (useSearchParams().get("expired") !== "1") return null;
+
+  return (
+    <p role="status" className="text-sm text-muted-foreground">
+      This link could not be used. Request a new one and open it in this browser.
+    </p>
+  );
+}
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -77,8 +89,8 @@ export default function ForgotPasswordPage() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            <MessageSquare className="h-6 w-6 text-primary" />
+          <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center">
+            <TeddyMark size={56} priority />
           </div>
           <CardTitle className="text-xl text-foreground">Reset password</CardTitle>
           <CardDescription className="text-muted-foreground">
@@ -87,6 +99,7 @@ export default function ForgotPasswordPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleReset} className="flex flex-col gap-4">
+            <Suspense><ExpiredLinkNotice /></Suspense>
             {error && (
               <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                 {error}

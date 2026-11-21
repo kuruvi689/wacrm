@@ -81,6 +81,14 @@ export function canEditSettings(role: AccountRole): boolean {
 }
 
 /**
+ * Owner / admin: change the product catalog (prices, tax, discount
+ * limits). Matches the `products_*` RLS policies in migration 039.
+ */
+export function canManageCatalog(role: AccountRole): boolean {
+  return hasMinRole(role, "admin");
+}
+
+/**
  * Owner / admin / agent: write operational data — send messages,
  * create contacts, move deals, run broadcasts, edit automations.
  * Viewers are read-only.

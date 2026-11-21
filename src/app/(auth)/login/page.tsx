@@ -15,7 +15,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { MessageSquare, UsersRound } from "lucide-react";
+import { UsersRound } from "lucide-react";
+import { TeddyMark } from "@/components/brand/teddy-logo";
+import { GoogleSignInButton, OrDivider } from "@/components/auth/google-sign-in-button";
+import { signInErrorMessage } from "@/lib/auth/sign-in-errors";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless it sits under a Suspense boundary. We split the form into
@@ -40,9 +43,16 @@ function LoginPageInner() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  // /auth/callback sends failed Google sign-ins back here with an
+  // ?error= code; only known codes are shown, as fixed text.
+  const [error, setError] = useState<string | null>(
+    signInErrorMessage(searchParams.get("error")),
+  );
   const [loading, setLoading] = useState(false);
   const supabase = createClient();
+  const afterSignIn = inviteToken
+    ? `/join/${encodeURIComponent(inviteToken)}`
+    : "/dashboard";
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,21 +78,20 @@ function LoginPageInner() {
     // back to /login — which looks like the page "just refreshing"
     // instead of signing in (issue #365). Mirrors the deliberate full
     // reload the invite-accept flow already uses in join/[token].
-    const destination = inviteToken
-      ? `/join/${encodeURIComponent(inviteToken)}`
-      : "/dashboard";
-    window.location.href = destination;
+    window.location.href = afterSignIn;
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+          <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center">
             {inviteToken ? (
-              <UsersRound className="h-6 w-6 text-primary" />
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+                <UsersRound className="h-6 w-6 text-primary" />
+              </div>
             ) : (
-              <MessageSquare className="h-6 w-6 text-primary" />
+              <TeddyMark size={56} priority />
             )}
           </div>
           <CardTitle className="text-xl text-foreground">
@@ -148,6 +157,13 @@ function LoginPageInner() {
               {loading ? t('signingIn') : t('signIn')}
             </Button>
           </form>
+
+          <OrDivider />
+          <GoogleSignInButton
+            next={afterSignIn}
+            label="Continue with Google"
+            onError={setError}
+          />
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             {t('noAccount')}{" "}

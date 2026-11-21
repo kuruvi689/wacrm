@@ -12,6 +12,7 @@ const conversationInserts: Array<Record<string, unknown>> = []
 const messageInserts: Array<Record<string, unknown>> = []
 
 // Toggles for the per-test scenario.
+let profileRole = 'agent'
 let existingConversation: Record<string, unknown> | null = null
 let contactRow: Record<string, unknown> | null = null
 // A conversation created during the request becomes retrievable by id —
@@ -35,7 +36,7 @@ function makeSupabaseMock() {
     const selectResult = () => {
       switch (table) {
         case 'profiles':
-          return { data: { account_id: 'acct-1' }, error: null }
+          return { data: { account_id: 'acct-1', account_role: profileRole }, error: null }
         case 'contacts':
           return { data: contactRow, error: null }
         case 'conversations':
@@ -120,6 +121,12 @@ function makeSupabaseMock() {
 
 let supabaseMock = makeSupabaseMock()
 
+// The workspace gate has its own tests (route-gate.test.ts); here the
+// workspace is always active so these tests stay about the send route.
+vi.mock('@/lib/saas/route-gate', () => ({
+  workspaceBlockResponse: async () => null,
+}))
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
 }))
@@ -179,6 +186,7 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
     existingConversation = null
     createdConversation = null
     contactRow = CONTACT
+    profileRole = 'agent'
     supabaseMock = makeSupabaseMock()
     sendTemplateMessage.mockClear()
   })
@@ -246,6 +254,17 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
     expect(res.status).toBe(404)
     expect(json.error).toMatch(/contact not found/i)
     expect(sendTemplateMessage).not.toHaveBeenCalled()
+  })
+
+  it('403s a viewer before touching the conversation or Meta', async () => {
+    profileRole = 'viewer'
+
+    const res = await postContactTemplate()
+
+    expect(res.status).toBe(403)
+    expect(sendTemplateMessage).not.toHaveBeenCalled()
+    expect(conversationInserts).toHaveLength(0)
+    expect(messageInserts).toHaveLength(0)
   })
 
   it('400s when neither conversation_id nor contact_id is provided', async () => {

@@ -21,6 +21,42 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
+/**
+ * Expand an IPv6 literal to its eight 16-bit groups, or null if it
+ * isn't a valid literal. Handles `::` compression and a dotted-quad
+ * IPv4 tail (`::ffff:127.0.0.1`), which is how the same address can
+ * also be written in hex (`::ffff:7f00:1`).
+ */
+function expandIpv6(raw: string): number[] | null {
+  let v6 = raw.toLowerCase().replace(/^\[|\]$/g, '');
+  v6 = v6.replace(/%.*$/, ''); // zone id
+  if (!v6.includes(':')) return null;
+
+  const tail = v6.match(/^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (tail) {
+    const o = tail.slice(2).map(Number);
+    if (o.some((n) => n > 255)) return null;
+    v6 = `${tail[1]}${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`;
+  }
+
+  const halves = v6.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const rest = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const missing = 8 - head.length - rest.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 1) return null;
+
+  const groups = [...head, ...Array<string>(halves.length === 2 ? missing : 0).fill('0'), ...rest];
+  if (groups.length !== 8) return null;
+  const out = groups.map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN));
+  return out.some(Number.isNaN) ? null : out;
+}
+
+/** Dotted-quad string for two 16-bit groups holding an embedded IPv4. */
+function embeddedV4(hi: number, lo: number): string {
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+}
+
 /** True for loopback / private / link-local / reserved IPv4 or IPv6. */
 export function isPrivateOrReservedIp(ip: string): boolean {
   const v4 = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -33,17 +69,34 @@ export function isPrivateOrReservedIp(ip: string): boolean {
     if (a === 169 && b === 254) return true; // link-local + cloud metadata
     if (a === 172 && b >= 16 && b <= 31) return true; // private
     if (a === 192 && b === 168) return true; // private
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
+    if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking 198.18.0.0/15
+    if (a >= 224) return true; // multicast 224/4, reserved 240/4, broadcast
     return false;
   }
 
-  const v6 = ip.toLowerCase().replace(/^\[|\]$/g, '');
-  if (v6 === '::1' || v6 === '::') return true; // loopback / unspecified
-  if (v6.startsWith('fe8') || v6.startsWith('fe9') || v6.startsWith('fea') || v6.startsWith('feb'))
-    return true; // fe80::/10 link-local
-  if (v6.startsWith('fc') || v6.startsWith('fd')) return true; // fc00::/7 ULA
-  const mapped = v6.match(/::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (mapped) return isPrivateOrReservedIp(mapped[1]); // IPv4-mapped
+  // Anything that is neither IPv4 nor a parseable IPv6 literal is
+  // refused (fail closed).
+  const g = expandIpv6(ip);
+  if (!g) return true;
+
+  // :: (unspecified) and ::1 (loopback)
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] <= 1) return true;
+  // IPv4-compatible ::a.b.c.d (deprecated) and IPv4-mapped ::ffff:a.b.c.d,
+  // in dotted or hex form: judge by the embedded IPv4.
+  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0 || g[5] === 0xffff)) {
+    return isPrivateOrReservedIp(embeddedV4(g[6], g[7]));
+  }
+  // NAT64 64:ff9b::/96: the low 32 bits are the IPv4 destination.
+  if (g[0] === 0x64 && g[1] === 0xff9b) {
+    if (g.slice(2, 6).every((x) => x === 0)) return isPrivateOrReservedIp(embeddedV4(g[6], g[7]));
+    return true; // 64:ff9b:1::/48 local-use NAT64
+  }
+  // 6to4 2002::/16: bits 16..47 are the embedded IPv4.
+  if (g[0] === 0x2002) return isPrivateOrReservedIp(embeddedV4(g[1], g[2]));
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+  if ((g[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 ULA
+  if ((g[0] & 0xff00) === 0xff00) return true; // ff00::/8 multicast
   return false;
 }
 

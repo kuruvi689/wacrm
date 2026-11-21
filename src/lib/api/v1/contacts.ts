@@ -12,6 +12,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
 import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
+import { parsePlanLimitError, planLimitMessage, PLAN_LIMIT_STATUS } from '@/lib/saas/plan-limit-error';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
 /** Row select that embeds the contact's tags for serialization. */
@@ -143,6 +144,11 @@ export async function findOrCreateContact(
     if (isUniqueViolation(error)) {
       const raced = await findExistingContact(db, accountId, sanitized);
       if (raced) return { id: raced.id, created: false };
+    }
+    // Plan cap (migration 037 trigger): a 402 the caller can act on, not a 500.
+    const planLimit = parsePlanLimitError(error);
+    if (planLimit) {
+      throw new ContactError(planLimitMessage(planLimit), PLAN_LIMIT_STATUS);
     }
     console.error('[api/v1/contacts] create error:', error);
     throw new ContactError('Failed to create contact', 500);

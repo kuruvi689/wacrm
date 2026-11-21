@@ -15,6 +15,7 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import { assertServiceWindowOpen } from '@/lib/whatsapp/service-window'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -81,6 +82,9 @@ export async function engineSendText(
   if (!isValidE164(sanitized)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
+
+  // Free-form send: only inside the 24h customer service window.
+  await assertServiceWindowOpen(db, args.conversationId)
 
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
@@ -191,6 +195,9 @@ export async function engineSendMedia(
   if (!isValidE164(sanitized)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
+
+  // Free-form send: only inside the 24h customer service window.
+  await assertServiceWindowOpen(db, args.conversationId)
 
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
@@ -343,6 +350,9 @@ async function sendInteractiveViaMeta(
   if (!isValidE164(sanitized)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
+
+  // Free-form send: only inside the 24h customer service window.
+  await assertServiceWindowOpen(db, input.conversationId)
 
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')

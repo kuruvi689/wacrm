@@ -1,3 +1,5 @@
+import { workspaceBlockResponse } from '@/lib/saas/route-gate'
+import { roleBlockResponse } from '@/lib/whatsapp/role-gate'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
@@ -64,6 +66,13 @@ export async function PATCH(
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    const blocked = await workspaceBlockResponse(supabase, user.id)
+    if (blocked) return blocked
+
+    // Role gate (before any Meta call): admin+ only.
+    const roleBlocked = await roleBlockResponse(supabase, user.id, 'admin')
+    if (roleBlocked) return roleBlocked
 
     // Resolve the caller's account_id so template + whatsapp_config
     // lookups work for teammates who didn't author the row.
@@ -250,6 +259,13 @@ export async function DELETE(
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    const blocked = await workspaceBlockResponse(supabase, user.id)
+    if (blocked) return blocked
+
+    // Role gate (before any Meta call): admin+ only.
+    const roleBlocked = await roleBlockResponse(supabase, user.id, 'admin')
+    if (roleBlocked) return roleBlocked
 
     // Same account-scoping rationale as the PATCH handler above —
     // teammates need to be able to operate on shared templates +

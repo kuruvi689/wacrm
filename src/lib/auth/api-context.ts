@@ -34,7 +34,8 @@ import { findActiveKeyByHash, touchLastUsed } from '@/lib/api-keys/store';
 import { hashApiKey, looksLikeApiKey } from '@/lib/api-keys/keys';
 import { hasScope, type ApiScope } from '@/lib/api-keys/scopes';
 import { forbidden, rateLimited, unauthorized } from '@/lib/api/v1/respond';
-import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
+import { BLOCK_MESSAGES, evaluateAccess } from '@/lib/saas/access';
+import { checkRateLimitShared, RATE_LIMITS } from '@/lib/rate-limit';
 
 export interface ApiKeyContext {
   /** Discriminant — lets shared logic tell key auth from cookie auth. */
@@ -96,13 +97,27 @@ export async function requireApiKey(
 
   // Rate-limit per key, before the scope check, so an unauthorized-
   // scope caller still can't hammer the endpoint for free.
-  const limit = checkRateLimit(`apikey:${row.id}`, RATE_LIMITS.publicApi);
+  const limit = await checkRateLimitShared(`apikey:${row.id}`, RATE_LIMITS.publicApi);
   if (!limit.success) {
     throw rateLimited(limit);
   }
 
   if (scope && !hasScope(row.scopes, scope)) {
     throw forbidden(`This API key is missing the '${scope}' scope`);
+  }
+
+  // SaaS gate: keys of a suspended / expired-trial workspace stop working.
+  const { data: plan } = await supabaseAdmin()
+    .from('accounts')
+    .select('status, trial_ends_at')
+    .eq('id', row.account_id)
+    .maybeSingle();
+  const access = evaluateAccess({
+    status: plan?.status ?? 'active',
+    trial_ends_at: plan?.trial_ends_at ?? null,
+  });
+  if (!access.allowed) {
+    throw forbidden(BLOCK_MESSAGES[access.reason]);
   }
 
   touchLastUsed(row.id);
