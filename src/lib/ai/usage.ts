@@ -3,7 +3,7 @@ import type { AiProvider, AiUsage } from './types'
 import { estimateCostMicros } from './pricing'
 
 export type AiUsageSource = 'auto_reply' | 'draft' | 'playground' | 'simulation'
-export type AiUsageStatus = 'ok' | 'error' | 'timeout' | 'blocked'
+export type AiUsageStatus = 'ok' | 'error' | 'timeout' | 'blocked' | 'handoff'
 
 export interface LogAiUsageArgs {
   accountId: string

@@ -196,6 +196,14 @@ describe.sequential("migration 044", () => {
     expect((await one(`SELECT count(*)::int AS n FROM ai_agent_events WHERE account_id = $1`, [A])).n).toBe(0);
   });
 
+  it("ai_usage_log.status accepts 'handoff' and still rejects junk", async () => {
+    const acct = await mkAccount("U");
+    const ins = (st: string) =>
+      db.query(`INSERT INTO ai_usage_log (account_id, mode, provider, model, status) VALUES ($1,'auto_reply','openai','m',$2)`, [acct, st]);
+    await expect(ins("handoff")).resolves.toBeDefined();
+    await expect(ins("bogus")).rejects.toThrow();
+  });
+
   it("ai_usage_log gains the metering columns", async () => {
     const cols = (await q(`SELECT column_name FROM information_schema.columns WHERE table_name = 'ai_usage_log'`)).map((c) => c.column_name);
     for (const c of ["agent_id", "agent_version_id", "latency_ms", "status", "error_code", "estimated_cost_micros", "source"]) {

@@ -339,6 +339,50 @@ describe('dispatchInboundToAiReply — metering', () => {
     expect(h.releaseUsage).not.toHaveBeenCalledWith('res-ai_responses', expect.anything())
   })
 
+  it('logs status ok only AFTER the send succeeded, with tokens', async () => {
+    h.engineSendText.mockImplementation(async () => {
+      expect(h.logAiUsage).not.toHaveBeenCalled() // nothing logged before the send
+      return { whatsapp_message_id: 'm1' }
+    })
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.logAiUsage).toHaveBeenCalledTimes(1)
+    expect(h.logAiUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: 'ok', usage: expect.objectContaining({ totalTokens: 50 }) }),
+    )
+  })
+
+  it('logs status handoff (with tokens) for a handoff turn, never ok', async () => {
+    h.generateReply.mockResolvedValue({
+      text: '', handoff: true, toolCalls: [],
+      usage: { promptTokens: 4, completionTokens: 1, totalTokens: 5 },
+    })
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.logAiUsage).toHaveBeenCalledTimes(1)
+    expect(h.logAiUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: 'handoff', handoff: true, usage: expect.objectContaining({ totalTokens: 5 }) }),
+    )
+  })
+
+  it('logs error/send_failed (not ok) when the send fails, and error when the slot is lost', async () => {
+    h.engineSendText.mockRejectedValue(new Error('boom'))
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.logAiUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: 'error', errorCode: 'send_failed' }),
+    )
+    expect(h.logAiUsage).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: 'ok' }))
+    h.logAiUsage.mockClear()
+    h.engineSendText.mockResolvedValue({ whatsapp_message_id: 'm' })
+    h.state.claim = false
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.logAiUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: 'error', errorCode: 'reply_cap_reached' }),
+    )
+  })
+
   it('estimateTokens is chars/4 plus the output cap', () => {
     expect(estimateTokens(['a'.repeat(400)], 100)).toBe(200)
   })

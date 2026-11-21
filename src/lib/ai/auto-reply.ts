@@ -342,22 +342,27 @@ export async function dispatchInboundToAiReply(args: DispatchArgs): Promise<void
     // committed once a reply is actually sent (released otherwise).
     await commitUsage(reservations[1], usage?.totalTokens ?? estimate, db)
     reservations = [reservations[0]]
-    await logAiUsage(db, {
-      accountId,
-      conversationId,
-      mode: 'auto_reply',
-      provider: config.provider,
-      model: config.model,
-      usage,
-      agentId: agent?.agentId ?? null,
-      agentVersionId: agent?.versionId ?? null,
-      latencyMs: Date.now() - started,
-      status: 'ok',
-      source: 'auto_reply',
-      handoff: handoff || !text,
-    })
+    // One usage row per call, written once the outcome is known so stats
+    // never count a reply that wasn't sent. Tokens are recorded on all.
+    const logOutcome = (status: 'ok' | 'handoff' | 'error', errorCode?: string) =>
+      logAiUsage(db, {
+        accountId,
+        conversationId,
+        mode: 'auto_reply',
+        provider: config.provider,
+        model: config.model,
+        usage,
+        agentId: agent?.agentId ?? null,
+        agentVersionId: agent?.versionId ?? null,
+        latencyMs: Date.now() - started,
+        status,
+        errorCode: errorCode ?? null,
+        source: 'auto_reply',
+        handoff: handoff || !text,
+      })
 
     if (handoff || !text) {
+      await logOutcome('handoff')
       await releaseUsage(reservations[0], db) // no customer reply was sent
       reservations = []
       await handOffToHuman(db, {
@@ -379,11 +384,13 @@ export async function dispatchInboundToAiReply(args: DispatchArgs): Promise<void
     })
     if (claimErr) {
       console.error('[ai auto-reply] claim_ai_reply_slot failed:', claimErr)
+      await logOutcome('error', 'slot_claim_failed')
       await releaseUsage(reservations[0], db)
       reservations = []
       return
     }
     if (claimed !== true) {
+      await logOutcome('error', 'reply_cap_reached')
       await releaseUsage(reservations[0], db) // lost the per-conversation cap race
       reservations = []
       return
@@ -411,11 +418,13 @@ export async function dispatchInboundToAiReply(args: DispatchArgs): Promise<void
         await commitUsage(reservations[0], 1, db)
       }
       reservations = []
+      await logOutcome('error', 'send_failed')
       console.error('[ai auto-reply] send failed:', sendErr instanceof Error ? sendErr.message : sendErr)
       return
     }
     await commitUsage(reservations[0], 1, db)
     reservations = []
+    await logOutcome('ok')
   } catch (err) {
     // Anything unexpected after a reservation: give the quota back.
     try {

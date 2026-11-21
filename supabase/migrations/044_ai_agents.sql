@@ -238,6 +238,11 @@ ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS agent_version_id uuid;
 ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS latency_ms integer;
 ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'ok'
   CHECK (status IN ('ok', 'error', 'timeout', 'blocked'));
+-- 'ok' = a reply was SENT; 'handoff' = the turn ended in a handoff to a
+-- human (tokens still recorded). Re-created so reruns/upgrades converge.
+ALTER TABLE ai_usage_log DROP CONSTRAINT IF EXISTS ai_usage_log_status_check;
+ALTER TABLE ai_usage_log ADD CONSTRAINT ai_usage_log_status_check
+  CHECK (status IN ('ok', 'error', 'timeout', 'blocked', 'handoff'));
 ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS error_code text;
 -- Micro-USD (1e-6 USD), estimated from the per-model price table in
 -- src/lib/ai/pricing.ts. NULL = unknown model. Estimate only.
