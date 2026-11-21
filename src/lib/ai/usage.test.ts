@@ -29,6 +29,14 @@ describe('logAiUsage', () => {
       prompt_tokens: 30,
       completion_tokens: 6,
       total_tokens: 36,
+      agent_id: null,
+      agent_version_id: null,
+      latency_ms: null,
+      status: 'ok',
+      error_code: null,
+      estimated_cost_micros: null, // 'claude-x' is not in the price table
+      source: 'auto_reply',
+      handoff: false,
     })
   })
 

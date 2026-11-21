@@ -1,4 +1,10 @@
-import { AiError, type AiUsage, type ChatMessage } from '../types'
+import {
+  AiError,
+  type AiUsage,
+  type ChatMessage,
+  type ProviderMessage,
+  type ToolSpec,
+} from '../types'
 
 // ============================================================
 // Bits shared by the OpenAI + Anthropic adapters.
@@ -10,6 +16,44 @@ export interface ProviderArgs {
   systemPrompt: string
   messages: ChatMessage[]
   timeoutMs: number
+  /** Sampling temperature (agent version). Omitted = provider default. */
+  temperature?: number
+  /** Output cap (agent version). Omitted = MAX_OUTPUT_TOKENS. */
+  maxOutputTokens?: number
+}
+
+/** Args for the tool-capable chat call. `extra` carries the tool-loop
+ *  continuation (assistant tool requests + our tool results). */
+export interface ChatArgs extends ProviderArgs {
+  tools?: ToolSpec[]
+  extra?: ProviderMessage[]
+  /** Keep `tools` declared (providers require it once the transcript has
+   *  tool blocks) but forbid calling any: the final, text-only turn. */
+  noMoreTools?: boolean
+}
+
+/**
+ * OpenAI reasoning-style models (o-series, gpt-5*) only accept the
+ * default temperature and 400 on anything else, so we omit it for them.
+ */
+export function openAiAcceptsTemperature(model: string): boolean {
+  return !/^(o\d|gpt-5)/i.test(model)
+}
+
+/** Parse a tool-call arguments value defensively; bad JSON → {}. */
+export function parseToolArgs(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>
+  }
+  if (typeof raw !== 'string' || !raw.trim()) return {}
+  try {
+    const v = JSON.parse(raw)
+    return v && typeof v === 'object' && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
 }
 
 /**

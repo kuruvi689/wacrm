@@ -975,6 +975,9 @@ async function processMessage(
       conversationId: conversation.id,
       contactId: contactRecord.id,
       configOwnerUserId,
+      // Stable per inbound message: the metering idempotency key, so a
+      // Meta redelivery can never be charged or answered twice.
+      inboundWamid: message.id,
     })
   }
 
