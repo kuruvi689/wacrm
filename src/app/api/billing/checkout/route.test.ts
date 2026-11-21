@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeFakeAdmin, type FakeAdmin } from '@/lib/billing/test-support'
 
@@ -46,13 +46,15 @@ function req(body: unknown, headers: Record<string, string> = {}) {
 describe('POST /api/billing/checkout', () => {
   beforeEach(() => {
     state.role = 'admin'
-    process.env.BILLING_UPI_VPA = 'teddy@okaxis'
-    process.env.BILLING_UPI_PAYEE_NAME = 'Teddy'
+    vi.stubEnv('BILLING_UPI_VPA', 'synthetic-checkout@invalid')
+    vi.stubEnv('BILLING_UPI_PAYEE_NAME', 'Synthetic checkout')
   })
 
-  it('never trusts an amount sent by the browser', async () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('uses the server receiving ID and price, ignoring browser overrides', async () => {
     const admin = setup()
-    const res = await POST(req({ plan_id: 'starter', amount: 1, amount_minor: 1, price: 1 }))
+    const res = await POST(req({ plan_id: 'starter', amount: 1, amount_minor: 1, price: 1, upi_vpa: 'browser@invalid' }))
     expect(res.status).toBe(200)
 
     const open = admin.calls.find((c) => c.fn === 'billing_open_checkout')!
@@ -63,7 +65,10 @@ describe('POST /api/billing/checkout', () => {
     expect(open.args.p_account_id).toBe('acct-1')
 
     const create = admin.calls.find((c) => c.fn === 'billing_create_payment_attempt')!
-    expect(String(create.args.p_upi_uri)).toContain('am=999.00')
+    const uri = new URL(String(create.args.p_upi_uri))
+    expect(uri.searchParams.get('pa')).toBe('synthetic-checkout@invalid')
+    expect(uri.searchParams.get('am')).toBe('999.00')
+    expect(create.args.p_provider).toBe('manual_upi')
     const json = await res.json()
     expect(json.attempt.amount_minor).toBe(99900)
   })

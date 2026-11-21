@@ -125,3 +125,12 @@ it("limits CRM reads to the authenticated user's workspace", async () => {
     expect(privatePlan.rows).toEqual([]);
   });
 });
+
+
+it("keeps synthetic payments pending until an authorized settlement", async () => {
+  const smoke = readFileSync(path.join(MIGRATIONS_DIR, "..", "tests", "payment-staging-smoke.sql"), "utf8");
+
+  await expect(db.exec(smoke)).resolves.toBeDefined();
+  const leftovers = await db.query("SELECT id FROM plans WHERE id LIKE 'synthetic-smoke-%'");
+  expect(leftovers.rows).toEqual([]);
+});
