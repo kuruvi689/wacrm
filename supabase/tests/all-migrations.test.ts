@@ -68,3 +68,60 @@ describe.sequential(`migrations from ${RERUN_FROM} are idempotent`, () => {
     await expect(db.exec(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"))).resolves.toBeDefined();
   });
 });
+
+it("requires demo opt-in and seeds an isolated workspace twice without duplicates", async () => {
+  const seed = readFileSync(path.join(MIGRATIONS_DIR, "..", "seed", "demo.sql"), "utf8");
+
+  await expect(db.exec(seed)).rejects.toThrow("isolated-staging opt-in");
+  await db.exec("SET wacrm.demo_seed = 'isolated-staging'");
+  await expect(db.exec(seed)).rejects.toThrow("query returned no rows");
+  await db.exec("INSERT INTO auth.users (email) VALUES ('wacrm-demo@example.invalid')");
+
+  await db.exec(seed);
+  await db.exec(seed);
+
+  const result = await db.query(`
+    SELECT
+      (SELECT count(*)::int FROM contacts) AS contacts,
+      (SELECT count(*)::int FROM conversations) AS conversations,
+      (SELECT count(*)::int FROM messages) AS messages,
+      (SELECT count(*)::int FROM ai_agents WHERE status = 'draft' AND current_version_id IS NOT NULL) AS agents,
+      (SELECT count(*)::int FROM plans WHERE id = 'wacrm-demo' AND NOT is_public AND price_minor IS NULL) AS demo_plans
+  `);
+  expect(result.rows).toEqual([{ contacts: 1, conversations: 1, messages: 1, agents: 1, demo_plans: 1 }]);
+});
+
+
+it("limits CRM reads to the authenticated user's workspace", async () => {
+  await db.exec(`
+    INSERT INTO auth.users (id, email) VALUES
+      ('0d3a0000-0000-4000-8000-000000000011', 'owner-a@example.invalid'),
+      ('0d3a0000-0000-4000-8000-000000000012', 'owner-b@example.invalid');
+    INSERT INTO contacts (user_id, account_id, phone, name)
+    SELECT owner_user_id, id, '12025550142', name
+    FROM accounts
+    WHERE owner_user_id IN (
+      '0d3a0000-0000-4000-8000-000000000011',
+      '0d3a0000-0000-4000-8000-000000000012'
+    );
+    -- Mirror the API role's schema and table grants for this policy test.
+    GRANT USAGE ON SCHEMA auth, public TO authenticated;
+    GRANT SELECT ON contacts, conversations, ai_agents, plans TO authenticated;
+  `);
+
+  await db.transaction(async (tx) => {
+    await tx.exec(`
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '0d3a0000-0000-4000-8000-000000000011';
+      SET LOCAL request.jwt.claim.role = 'authenticated';
+    `);
+    const own = await tx.query("SELECT name FROM contacts");
+    expect(own.rows).toEqual([{ name: "owner-a@example.invalid" }]);
+    const otherConversations = await tx.query("SELECT id FROM conversations");
+    expect(otherConversations.rows).toEqual([]);
+    const otherAgents = await tx.query("SELECT id FROM ai_agents");
+    expect(otherAgents.rows).toEqual([]);
+    const privatePlan = await tx.query("SELECT id FROM plans WHERE id = 'wacrm-demo'");
+    expect(privatePlan.rows).toEqual([]);
+  });
+});

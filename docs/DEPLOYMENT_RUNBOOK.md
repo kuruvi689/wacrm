@@ -217,7 +217,7 @@ Run these on production after each deploy, and on staging before gate 5. Use a t
 | 6.2 | Login | Sign in with the test account (email or Google). | Dashboard loads. Account name is correct. |
 | 6.3 | Meta webhook verify (GET) | Meta app dashboard "Verify and save" for the callback `https://wacrm-wheat.vercel.app/api/whatsapp/webhook`. The verify token value comes from the Meta dashboard and your password manager. | Meta shows the webhook as verified. A wrong token must be rejected. |
 | 6.4 | Test message | From the dashboard, send one text message from the test number to a test recipient. Then reply from that recipient's phone. | Outbound shows as sent; inbound appears in the thread once. |
-| 6.5 | Billing page | Billing UI is in progress in this release candidate. Before the test, check that the billing settings section exists. The billing API (`/api/billing`, `/api/billing/checkout`) can be smoke-tested without the UI. | Page loads without error, or record that the UI is not yet built and test the API instead. |
+| 6.5 | Billing page | Open Settings → Billing as a workspace admin. Check plans, invoice history and a test checkout. Open Admin → Billing as a platform operator. | The customer Billing page and operator Billing console both load with the expected access. |
 | 6.6 | Cron with Bearer | See section 6.6 command below. | HTTP 200 with a JSON body. HTTP 401 means the secret is wrong. HTTP 503 means `CRON_SECRET` is missing or shorter than 16 characters. |
 
 ### 6.6 Cron check command

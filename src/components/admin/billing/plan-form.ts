@@ -13,10 +13,10 @@ export const LIMIT_FIELDS = [
   ['max_active_automations', 'Active automations'],
   ['max_integrations', 'Integrations'],
   ['knowledge_storage_mb', 'Knowledge storage (MB)'],
-  ['monthly_messages', 'Messages / month'],
+  ['monthly_messages', 'Messages / month (tracking only)'],
   ['monthly_ai_responses', 'AI replies / month'],
   ['monthly_ai_tokens', 'AI tokens / month'],
-  ['monthly_workflow_runs', 'Automation runs / month'],
+  ['monthly_workflow_runs', 'Automation runs / month (not enforced)'],
 ] as const
 
 export type LimitKey = (typeof LIMIT_FIELDS)[number][0]

@@ -21,8 +21,7 @@ interface PlanCardsProps {
 
 function features(plan: BillingPlan): string[] {
   return [
-    `${limitText(plan.monthly_messages)} WhatsApp messages a month`,
-    `${limitText(plan.monthly_ai_responses)} AI replies a month`,
+    `${limitText(plan.monthly_ai_responses)} automatic AI replies a month`,
     `${limitText(plan.max_members)} team members`,
     `${limitText(plan.max_contacts)} contacts`,
     `${limitText(plan.max_whatsapp_numbers)} WhatsApp numbers`,
