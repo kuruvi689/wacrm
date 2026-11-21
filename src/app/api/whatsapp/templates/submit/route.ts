@@ -1,4 +1,5 @@
 import { workspaceBlockResponse } from '@/lib/saas/route-gate'
+import { roleBlockResponse } from '@/lib/whatsapp/role-gate'
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
@@ -100,6 +101,10 @@ export async function POST(request: Request) {
 
     const blocked = await workspaceBlockResponse(supabase, user.id)
     if (blocked) return blocked
+
+    // Role gate (before any Meta call): admin+ only.
+    const roleBlocked = await roleBlockResponse(supabase, user.id, 'admin')
+    if (roleBlocked) return roleBlocked
 
     // Resolve the caller's account_id — whatsapp_config + the
     // message_templates row are account-scoped post-multi-user.

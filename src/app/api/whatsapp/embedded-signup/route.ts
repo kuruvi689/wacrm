@@ -14,7 +14,7 @@ import { NextResponse } from 'next/server'
 
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
-import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { checkRateLimitShared, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { generateRegistrationPin, parseEmbeddedSignupBody } from '@/lib/whatsapp/embedded-signup'
 import { exchangeEmbeddedSignupCode } from '@/lib/whatsapp/meta-api'
 import { saveWhatsAppConfig } from '@/lib/whatsapp/save-config'
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   try {
     const ctx = await requireRole('admin')
 
-    const limit = checkRateLimit(`admin:embedded-signup:${ctx.userId}`, RATE_LIMITS.adminAction)
+    const limit = await checkRateLimitShared(`admin:embedded-signup:${ctx.userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
 
     const parsed = parseEmbeddedSignupBody(await request.json().catch(() => null))

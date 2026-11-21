@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Vendored minified opus-recorder encoder worker (served statically).
     "public/opus/**",
+    // Local launch-video renders (gitignored).
+    "brag-output/**",
   ]),
 ]);
 

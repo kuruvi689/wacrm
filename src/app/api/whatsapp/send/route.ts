@@ -1,8 +1,9 @@
 import { workspaceBlockResponse } from '@/lib/saas/route-gate'
+import { roleBlockResponse } from '@/lib/whatsapp/role-gate'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import {
-  checkRateLimit,
+  checkRateLimitShared,
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit'
@@ -40,9 +41,13 @@ export async function POST(request: Request) {
     const blocked = await workspaceBlockResponse(supabase, user.id)
     if (blocked) return blocked
 
+    // Role gate (before any Meta call): agent+ only.
+    const roleBlocked = await roleBlockResponse(supabase, user.id, 'agent')
+    if (roleBlocked) return roleBlocked
+
     // Per-user rate limit. Bucket key is scoped to this route so
     // `/broadcast` has an independent budget.
-    const limit = checkRateLimit(`send:${user.id}`, RATE_LIMITS.send)
+    const limit = await checkRateLimitShared(`send:${user.id}`, RATE_LIMITS.send)
     if (!limit.success) {
       return rateLimitResponse(limit)
     }

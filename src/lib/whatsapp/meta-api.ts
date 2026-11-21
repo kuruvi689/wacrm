@@ -9,6 +9,17 @@
  * instead of a runtime rejection from Meta.
  */
 
+import {
+  META_DEFAULT_BACKOFF_BASE_MS,
+  META_DEFAULT_TIMEOUT_MS,
+  META_MAX_ATTEMPTS,
+  computeBackoffMs,
+  isAbortError,
+  isPreResponseNetworkError,
+  isThrottleResponse,
+  parseRetryAfterMs,
+} from './meta-retry'
+
 const META_API_VERSION = 'v21.0'
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`
 
@@ -24,18 +35,149 @@ export interface MetaPhoneInfo {
 }
 
 interface MetaErrorResponse {
-  error?: { message?: string; code?: number; type?: string }
+  error?: {
+    message?: string
+    code?: number
+    type?: string
+    error_subcode?: number
+    fbtrace_id?: string
+  }
 }
 
-async function throwMetaError(response: Response, fallback: string): Promise<never> {
+export type MetaApiErrorKind = 'api' | 'timeout' | 'network'
+
+/**
+ * Typed Meta failure. `message` stays Meta's own message (callers such as
+ * isRecipientNotAllowedError match on it); the structured fields let
+ * callers branch on `code` (131047 window closed, 131026 undeliverable,
+ * 190 token expired, ...) and log `fbtraceId` for Meta support.
+ */
+export class MetaApiError extends Error {
+  readonly httpStatus: number | null
+  readonly code: number | null
+  readonly subcode: number | null
+  readonly fbtraceId: string | null
+  readonly type: string | null
+  readonly kind: MetaApiErrorKind
+  readonly retryAfterMs: number | null
+  constructor(
+    message: string,
+    init: {
+      httpStatus?: number | null
+      code?: number | null
+      subcode?: number | null
+      fbtraceId?: string | null
+      type?: string | null
+      kind?: MetaApiErrorKind
+      retryAfterMs?: number | null
+    } = {},
+  ) {
+    super(message)
+    this.name = 'MetaApiError'
+    this.httpStatus = init.httpStatus ?? null
+    this.code = init.code ?? null
+    this.subcode = init.subcode ?? null
+    this.fbtraceId = init.fbtraceId ?? null
+    this.type = init.type ?? null
+    this.kind = init.kind ?? 'api'
+    this.retryAfterMs = init.retryAfterMs ?? null
+  }
+}
+
+async function buildMetaError(response: Response, fallback: string): Promise<MetaApiError> {
   let message = fallback
+  let err: MetaErrorResponse['error']
   try {
     const data = (await response.json()) as MetaErrorResponse
-    if (data.error?.message) message = data.error.message
+    err = data.error
+    if (err?.message) message = err.message
   } catch {
     // response body wasn't JSON — keep the fallback
   }
-  throw new Error(message)
+  return new MetaApiError(message, {
+    httpStatus: response.status,
+    code: err?.code ?? null,
+    subcode: err?.error_subcode ?? null,
+    fbtraceId: err?.fbtrace_id ?? null,
+    type: err?.type ?? null,
+    retryAfterMs: parseRetryAfterMs(response.headers?.get?.('retry-after')),
+  })
+}
+
+async function throwMetaError(response: Response, fallback: string): Promise<never> {
+  throw await buildMetaError(response, fallback)
+}
+
+function envNumber(name: string, fallback: number): number {
+  const raw = Number(process.env[name])
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+interface MetaFetchOptions {
+  /** Retry throttled responses / pre-response connection failures (sends only). */
+  retry?: boolean
+  /** Override the per-attempt timeout (default META_API_TIMEOUT_MS or 15s). */
+  timeoutMs?: number
+}
+
+/**
+ * fetch() with an AbortController timeout and, for sends, bounded retry
+ * (max 3 attempts, exponential backoff + jitter) that is limited to cases
+ * where Meta provably did not process the request: HTTP 429 / throttle
+ * codes, or a connection failure before any response. A timeout is never
+ * retried — the request may already have reached Meta.
+ *
+ * Returns the Response (including non-2xx on the final attempt) so the
+ * existing `if (!response.ok) throwMetaError(...)` call sites keep working.
+ */
+async function metaFetch(
+  url: string,
+  init: RequestInit,
+  options: MetaFetchOptions = {},
+): Promise<Response> {
+  const timeoutMs =
+    options.timeoutMs ?? envNumber('META_API_TIMEOUT_MS', META_DEFAULT_TIMEOUT_MS)
+  const baseMs = envNumber('META_API_RETRY_BASE_MS', META_DEFAULT_BACKOFF_BASE_MS)
+  const maxAttempts = options.retry ? META_MAX_ATTEMPTS : 1
+
+  for (let attempt = 1; ; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let response: Response
+    try {
+      response = await fetch(url, { ...init, signal: controller.signal })
+    } catch (err) {
+      clearTimeout(timer)
+      if (isAbortError(err)) {
+        throw new MetaApiError(`Meta API request timed out after ${timeoutMs}ms`, {
+          kind: 'timeout',
+        })
+      }
+      if (attempt < maxAttempts && isPreResponseNetworkError(err)) {
+        await sleep(computeBackoffMs(attempt, { baseMs }))
+        continue
+      }
+      throw err
+    }
+    clearTimeout(timer)
+
+    if (response.ok || attempt >= maxAttempts) return response
+
+    // Peek at the error body on a clone so the caller can still read it.
+    let code: number | null = null
+    try {
+      const data = (await response.clone().json()) as MetaErrorResponse
+      code = data.error?.code ?? null
+    } catch {
+      // non-JSON body — only the HTTP status can classify it
+    }
+    if (!isThrottleResponse(response.status, code)) return response
+
+    const retryAfter = parseRetryAfterMs(response.headers?.get?.('retry-after'))
+    await sleep(retryAfter ?? computeBackoffMs(attempt, { baseMs }))
+  }
 }
 
 // ============================================================
@@ -56,7 +198,7 @@ export async function verifyPhoneNumber(
 ): Promise<MetaPhoneInfo> {
   const { phoneNumberId, accessToken } = args
   const url = `${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating`
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
   if (!response.ok) {
@@ -125,7 +267,7 @@ export async function registerPhoneNumber(
 ): Promise<RegisterPhoneNumberResult> {
   const { phoneNumberId, accessToken, pin } = args
   const url = `${META_API_BASE}/${phoneNumberId}/register`
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -169,7 +311,7 @@ export async function subscribeWabaToApp(
 ): Promise<void> {
   const { wabaId, accessToken } = args
   const url = `${META_API_BASE}/${wabaId}/subscribed_apps`
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}` },
   })
@@ -195,7 +337,7 @@ export async function exchangeEmbeddedSignupCode(
   args: ExchangeEmbeddedSignupCodeArgs
 ): Promise<string> {
   const { appId, appSecret, code } = args
-  const response = await fetch(`${META_API_BASE}/oauth/access_token`, {
+  const response = await metaFetch(`${META_API_BASE}/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -237,7 +379,7 @@ export async function getSubscribedApps(
 ): Promise<SubscribedApp[]> {
   const { wabaId, accessToken } = args
   const url = `${META_API_BASE}/${wabaId}/subscribed_apps`
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
   if (!response.ok) {
@@ -280,14 +422,14 @@ export async function sendTextMessage(
   if (contextMessageId) {
     body.context = { message_id: contextMessageId }
   }
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify(body),
-  })
+  }, { retry: true })
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }
@@ -346,14 +488,14 @@ export async function sendMediaMessage(
   }
   if (contextMessageId) body.context = { message_id: contextMessageId }
 
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify(body),
-  })
+  }, { retry: true })
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }
@@ -464,14 +606,14 @@ export async function sendTemplateMessage(
     body.context = { message_id: contextMessageId }
   }
 
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify(body),
-  })
+  }, { retry: true })
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }
@@ -522,7 +664,7 @@ export async function uploadResumableMedia(
     file_type: mimeType,
     access_token: accessToken,
   })
-  const startRes = await fetch(
+  const startRes = await metaFetch(
     `${META_API_BASE}/${appId}/uploads?${startParams.toString()}`,
     { method: 'POST' },
   )
@@ -536,7 +678,7 @@ export async function uploadResumableMedia(
 
   // Step 2 — upload the bytes. Note the `OAuth` auth scheme (not Bearer)
   // and the file_offset header, both required by this endpoint.
-  const uploadRes = await fetch(`${META_API_BASE}/${startData.id}`, {
+  const uploadRes = await metaFetch(`${META_API_BASE}/${startData.id}`, {
     method: 'POST',
     headers: {
       Authorization: `OAuth ${accessToken}`,
@@ -545,7 +687,7 @@ export async function uploadResumableMedia(
     // Uint8Array is a valid BodyInit at runtime; cast around the
     // lib.dom ArrayBufferLike-vs-ArrayBuffer generic mismatch.
     body: bytes as unknown as BodyInit,
-  })
+  }, { timeoutMs: 60_000 })
   if (!uploadRes.ok) {
     await throwMetaError(uploadRes, `Resumable upload failed: ${uploadRes.status}`)
   }
@@ -592,7 +734,7 @@ export async function submitMessageTemplate(
 ): Promise<SubmitMessageTemplateResult> {
   const { wabaId, accessToken, payload } = args
   const url = `${META_API_BASE}/${wabaId}/message_templates`
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -644,7 +786,7 @@ export async function editMessageTemplate(
   const { metaTemplateId, accessToken, components, category } = args
   const body: Record<string, unknown> = { components }
   if (category) body.category = category
-  const response = await fetch(`${META_API_BASE}/${metaTemplateId}`, {
+  const response = await metaFetch(`${META_API_BASE}/${metaTemplateId}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -683,7 +825,7 @@ export async function deleteMessageTemplate(
   const params = new URLSearchParams({ name })
   if (metaTemplateId) params.set('hsm_id', metaTemplateId)
   const url = `${META_API_BASE}/${wabaId}/message_templates?${params.toString()}`
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${accessToken}` },
   })
@@ -718,7 +860,7 @@ export async function sendReactionMessage(
 ): Promise<MetaSendResult> {
   const { phoneNumberId, accessToken, to, targetMessageId, emoji } = args
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -731,7 +873,7 @@ export async function sendReactionMessage(
       type: 'reaction',
       reaction: { message_id: targetMessageId, emoji },
     }),
-  })
+  }, { retry: true })
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }
@@ -854,14 +996,14 @@ export async function sendInteractiveButtons(
   if (contextMessageId) body.context = { message_id: contextMessageId }
 
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify(body),
-  })
+  }, { retry: true })
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }
@@ -986,14 +1128,14 @@ export async function sendInteractiveList(
   if (contextMessageId) body.context = { message_id: contextMessageId }
 
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify(body),
-  })
+  }, { retry: true })
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }
@@ -1043,7 +1185,7 @@ export async function getMediaUrl(
   args: GetMediaUrlArgs
 ): Promise<{ url: string; mimeType: string }> {
   const { mediaId, accessToken } = args
-  const response = await fetch(`${META_API_BASE}/${mediaId}`, {
+  const response = await metaFetch(`${META_API_BASE}/${mediaId}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
   if (!response.ok) {
@@ -1067,9 +1209,11 @@ export async function downloadMedia(
   args: DownloadMediaArgs
 ): Promise<{ buffer: Buffer; contentType: string }> {
   const { downloadUrl, accessToken } = args
-  const response = await fetch(downloadUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
+  const response = await metaFetch(
+    downloadUrl,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    { timeoutMs: 60_000 },
+  )
   if (!response.ok) {
     throw new Error(`Media download failed: ${response.status}`)
   }

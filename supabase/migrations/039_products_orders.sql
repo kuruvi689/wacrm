@@ -100,21 +100,19 @@ CREATE INDEX IF NOT EXISTS idx_orders_conversation ON orders(conversation_id);
 
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 
--- Members read; agent+ create/update (agents take orders in the inbox);
--- only admin+ delete, since orders are financial records.
+-- Members read. There are deliberately NO write policies: totals and
+-- status are financial facts, so every write goes through the server
+-- (service role), which prices with priceOrder() and, later, marks an
+-- order paid only from a verified payment webhook. A user JWT talking
+-- to PostgREST directly must not be able to insert a ₹1 order or flip
+-- one to 'paid'.
 DROP POLICY IF EXISTS orders_select ON orders;
 DROP POLICY IF EXISTS orders_insert ON orders;
 DROP POLICY IF EXISTS orders_update ON orders;
 DROP POLICY IF EXISTS orders_delete ON orders;
 CREATE POLICY orders_select ON orders FOR SELECT
   USING (is_account_member(account_id));
-CREATE POLICY orders_insert ON orders FOR INSERT
-  WITH CHECK (is_account_member(account_id, 'agent'));
-CREATE POLICY orders_update ON orders FOR UPDATE
-  USING (is_account_member(account_id, 'agent'))
-  WITH CHECK (is_account_member(account_id, 'agent'));
-CREATE POLICY orders_delete ON orders FOR DELETE
-  USING (is_account_member(account_id, 'admin'));
+REVOKE INSERT, UPDATE, DELETE ON orders FROM anon, authenticated;
 
 DROP TRIGGER IF EXISTS set_updated_at ON orders;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON orders
@@ -142,19 +140,14 @@ CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 
 ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
 
+-- Read-only to users for the same reason as orders.
 DROP POLICY IF EXISTS order_items_select ON order_items;
 DROP POLICY IF EXISTS order_items_insert ON order_items;
 DROP POLICY IF EXISTS order_items_update ON order_items;
 DROP POLICY IF EXISTS order_items_delete ON order_items;
 CREATE POLICY order_items_select ON order_items FOR SELECT
   USING (is_account_member(account_id));
-CREATE POLICY order_items_insert ON order_items FOR INSERT
-  WITH CHECK (is_account_member(account_id, 'agent'));
-CREATE POLICY order_items_update ON order_items FOR UPDATE
-  USING (is_account_member(account_id, 'agent'))
-  WITH CHECK (is_account_member(account_id, 'agent'));
-CREATE POLICY order_items_delete ON order_items FOR DELETE
-  USING (is_account_member(account_id, 'admin'));
+REVOKE INSERT, UPDATE, DELETE ON order_items FROM anon, authenticated;
 
 -- An item must belong to the same account as its order, so a crafted
 -- insert can't attach a line to another tenant's order.

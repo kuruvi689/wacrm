@@ -22,6 +22,8 @@
 
 import { NextResponse } from 'next/server';
 
+import { supabaseAdmin } from '@/lib/flows/admin-client';
+
 export interface RateLimitOptions {
   /** Max requests allowed in `windowMs`. */
   limit: number;
@@ -87,6 +89,42 @@ export function checkRateLimit(
     reset: entry.resetAt,
     limit,
   };
+}
+
+/**
+ * Shared limiter for multi-instance deployments (Vercel). Uses the
+ * atomic `rate_limit_hit` Postgres function (migration 040) so every
+ * serverless instance counts against the same bucket. If the database
+ * call fails (outage, migration not applied yet) it falls back to the
+ * per-process limiter above rather than letting traffic through
+ * unlimited or blocking everyone.
+ */
+export async function checkRateLimitShared(
+  key: string,
+  options: RateLimitOptions,
+  db: { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }> } = supabaseAdmin(),
+): Promise<RateLimitResult> {
+  const windowSeconds = Math.max(1, Math.round(options.windowMs / 1000));
+  try {
+    const { data, error } = await db.rpc('rate_limit_hit', {
+      p_key: key.slice(0, 200),
+      p_limit: options.limit,
+      p_window_seconds: windowSeconds,
+    });
+    if (error || !data) throw error ?? new Error('empty rate_limit_hit result');
+    const row = data as { allowed: boolean; remaining: number; reset_at: string; limit: number };
+    return {
+      success: row.allowed,
+      remaining: Number(row.remaining),
+      reset: new Date(row.reset_at).getTime(),
+      limit: Number(row.limit),
+    };
+  } catch (err) {
+    console.error('[rate-limit] shared limiter unavailable, using in-process fallback', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return checkRateLimit(key, options);
+  }
 }
 
 /**

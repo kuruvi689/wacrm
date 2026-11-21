@@ -11,6 +11,8 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import { assertServiceWindowOpen } from '@/lib/whatsapp/service-window'
+import { OptedOutError, isContactOptedOut } from '@/lib/whatsapp/opt-out'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -129,6 +131,16 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   const sanitized = sanitizePhoneForMeta(contact.phone)
   if (!isValidE164(sanitized)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
+  }
+
+  if (input.kind === 'template') {
+    // Template sends are marketing-capable: never message an opted-out contact.
+    if (await isContactOptedOut(db, input.accountId, input.contactId)) {
+      throw new OptedOutError()
+    }
+  } else {
+    // Free-form send: only inside the 24h customer service window.
+    await assertServiceWindowOpen(db, input.conversationId)
   }
 
   const { data: config, error: configErr } = await db
