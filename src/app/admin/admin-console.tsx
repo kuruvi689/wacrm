@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { AdminBilling } from '@/components/admin/billing/admin-billing'
 
 type Status = 'trialing' | 'active' | 'suspended'
 
@@ -81,6 +82,7 @@ export function AdminConsole() {
   const [defaults, setDefaults] = useState<Defaults | null>(null)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
+  const [view, setView] = useState<'workspaces' | 'billing'>('workspaces')
 
   const apply = useCallback((data: ConsoleData | null) => {
     if (data) {
@@ -134,9 +136,20 @@ export function AdminConsole() {
         </p>
       </header>
 
-      {defaults && <DefaultsCard defaults={defaults} onSave={saveDefaults} />}
+      <div className="flex gap-2">
+        <Button size="sm" variant={view === 'workspaces' ? 'secondary' : 'ghost'} onClick={() => setView('workspaces')}>
+          Workspaces
+        </Button>
+        <Button size="sm" variant={view === 'billing' ? 'secondary' : 'ghost'} onClick={() => setView('billing')}>
+          Billing
+        </Button>
+      </div>
 
-      <Card>
+      {view === 'billing' && <AdminBilling />}
+
+      {view === 'workspaces' && defaults && <DefaultsCard defaults={defaults} onSave={saveDefaults} />}
+
+      {view === 'workspaces' && (<Card>
         <CardHeader>
           <CardTitle>Workspaces</CardTitle>
           <CardDescription>Plan changes take effect immediately. Empty limit = unlimited.</CardDescription>
@@ -160,7 +173,7 @@ export function AdminConsole() {
             </ul>
           )}
         </CardContent>
-      </Card>
+      </Card>)}
     </main>
   )
 }
