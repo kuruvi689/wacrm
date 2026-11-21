@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,16 @@ import {
 } from "@/components/ui/card";
 import { CheckCircle, ArrowLeft } from "lucide-react";
 import { TeddyMark } from "@/components/brand/teddy-logo";
+
+function ExpiredLinkNotice() {
+  if (useSearchParams().get("expired") !== "1") return null;
+
+  return (
+    <p role="status" className="text-sm text-muted-foreground">
+      This link could not be used. Request a new one and open it in this browser.
+    </p>
+  );
+}
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -88,6 +99,7 @@ export default function ForgotPasswordPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleReset} className="flex flex-col gap-4">
+            <Suspense><ExpiredLinkNotice /></Suspense>
             {error && (
               <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                 {error}

@@ -119,7 +119,7 @@ Daily check: Vercel cron logs show each job ran in the last 24 h. Also count `au
 
 ### 5.2 Account recovery
 
-- **Forgotten password:** there is no `/reset-password` page (OPS-11). Until one exists, the founder resets access in the Supabase Auth dashboard, after verifying the person's identity by a method the founder chooses. Never reset on an unverified request.
+- **Forgotten password:** use the reset link from the login page and open the email in the browser that requested it. Verify link delivery, an expired link, and sign-in with the new password in staging. The recovery callback URL and SMTP setup must be configured in Supabase.
 - **Emails not arriving:** default Supabase SMTP only reaches team members and has low limits (OPS-10). Check the Auth email settings.
 
 ### 5.3 Roles today

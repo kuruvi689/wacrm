@@ -16,6 +16,8 @@ export async function GET(request: Request) {
   const code = url.searchParams.get('code')
   const next = safeNextPath(url.searchParams.get('next'))
 
+  const recoveryRequested = next === '/reset-password'
+
   if (code) {
     const supabase = await createClient()
     const { error } = await supabase.auth.exchangeCodeForSession(code)
@@ -23,6 +25,10 @@ export async function GET(request: Request) {
       return NextResponse.redirect(new URL(next, url.origin))
     }
     console.error('[auth/callback] code exchange failed:', error.message)
+  }
+
+  if (recoveryRequested) {
+    return NextResponse.redirect(new URL('/forgot-password?expired=1', url.origin))
   }
 
   // Provider-side failures (user cancelled, consent denied) arrive as
