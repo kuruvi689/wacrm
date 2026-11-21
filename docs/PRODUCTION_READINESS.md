@@ -1,6 +1,6 @@
 # WACRM production readiness
 
-**Verdict: BLOCKED for paid production onboarding.** The release candidate uses a shared Supabase database with workspace isolation. Manual UPI is the implemented payment path. The review below covers the local release candidate and records the remaining evidence needed from staging.
+**Verdict: NOT production-ready — BLOCKED for paid production onboarding.** The release candidate uses a shared Supabase database with workspace isolation. Manual UPI is the implemented payment path. The review below covers the local release candidate and records the remaining evidence needed from staging.
 
 | Requirement | Status | Evidence or release gate |
 | --- | --- | --- |
@@ -24,3 +24,31 @@ Create the Auth user `wacrm-demo@example.invalid` in a disposable local or isola
 ## Monthly cost estimate
 
 Vercel Pro and Supabase Pro start at approximately **US$45/month combined**, before tax, overages, extra seats, an additional staging database, SMTP or monitoring. Free tiers start at US$0 and suit eligible experiments. Confirm usage terms and current pricing before purchase. Client-connected AI-provider and Meta usage are billed separately from WACRM subscriptions. [Vercel pricing](https://vercel.com/pricing) · [Supabase pricing](https://supabase.com/pricing)
+
+## Decisions needing founder approval
+
+Nothing below has a default that the code will assume in production. Plans stay unpriced until the founder sets them.
+
+- [ ] Plan names, prices and limits (members, contacts, AI replies, AI tokens, agents). Publish only limits the code enforces.
+- [ ] Proration rules for upgrades, downgrades and cancellation at period end.
+- [ ] Receiving bank account, UPI VPA and payee name shown at checkout, and the operators allowed to verify payments.
+- [ ] GST and invoice requirements, and the refund policy.
+- [ ] Payment path: manual UPI with operator bank verification (implemented) versus a licensed gateway later. YouPI-PG is rejected: it has no licence and issue #141 reports forged payment SMS.
+- [ ] Isolated staging Supabase project and staging deployment for acceptance.
+- [ ] Hosting plan: Vercel Pro, or Hobby with an external scheduler that calls the cron routes with `CRON_SECRET`.
+- [ ] Backup and restore targets (RPO and RTO), and one recorded restore into isolation.
+- [ ] Approval of the commit, migration window (040–044) and production rollout.
+
+## Cost ranges (verify current pricing)
+
+| Item | Range | Note |
+| --- | --- | --- |
+| Vercel | US$0 (Hobby, non-commercial) to about US$20/seat/month (Pro) | Hobby limits cron frequency and prohibits commercial use. Verify pricing. |
+| Supabase | US$0 (Free, pauses when idle) to about US$25/month (Pro) per project | A separate staging project adds a second bill. Verify pricing. |
+| AI provider | Billed to each client's own key | Not a WACRM cost; each simulation also spends the client's tokens. |
+| Meta WhatsApp | Billed to each client by Meta | Conversation pricing changes; verify. |
+| Email (SMTP) | US$0 to low tens of dollars | Needed for client sign-up and recovery email. |
+
+## Overall verdict
+
+**NOT production-ready.** The release candidate is code-complete and locally tested, but it must not be deployed until payment configuration is approved, a backup restore is proven, staging acceptance passes, and the founder approves the release.
